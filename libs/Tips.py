@@ -3,10 +3,6 @@
 
 from __future__ import with_statement
 
-from fuse import Fuse
-import fuse
-fuse.fuse_python_api = (0, 2)
-
 import sys, os
 sys.path.append(os.pardir)
 import threading, time

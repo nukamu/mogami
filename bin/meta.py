@@ -3,13 +3,6 @@
 
 from __future__ import with_statement
 
-# import mogami's original modules
-from libs import Channel
-from libs import DBMng
-from libs import System
-from conf import conf
-from libs.System import MogamiLog
-
 # import python standard modules
 import os
 import os.path
@@ -24,6 +17,14 @@ import Queue
 import string
 import re
 import random
+sys.path.append(os.pardir)
+
+# import mogami's original modules
+from libs import Channel
+from libs import DBMng
+from libs import System
+from conf import conf
+from libs.System import MogamiLog
 
 
 def meta_file_info(path):
@@ -35,6 +36,7 @@ def meta_file_info(path):
     l = buf.rsplit(',')
     if len(l) != 3:
         return (None, None, None)
+    # (dest, data_path, fsize)
     return (l[0], l[1], l[2])
 
 
@@ -69,6 +71,20 @@ class MogamiSystemInfo(object):
         except KeyError, e:
             return None
 
+    def choose_data_server(self, dest):
+        """choose destination of new file.
+
+        if dest exists in data servers, dest will be returned.
+        @param dest
+        """
+        rand = 0
+        if len(self.data_list) <= 0:
+            return None
+        if dest in self.data_list:
+            return dest
+        rand = random.randint(0, len(self.data_list) - 1)
+        return self.data_list[rand]
+
     def remove_data_server(self, ip):
         """remove a data server from Mogami system
 
@@ -91,23 +107,28 @@ class MogamiSystemInfo(object):
         """
         self.ramfile_list.extend(add_files_list)
 
+    def add_delfile(self, dest, data_path):
+        """
+        """
+        self.delfile_q.put((dest, data_path))
+
 
 class MogamiMetaHandler(System.MogamiDaemons):
     """This is the class for thread created for each client.
     This handler is run as multithread.
     """
-    def __init__(self, sysinfo, client_channel):
+    def __init__(self, client_channel, sysinfo):
         System.MogamiDaemons.__init__(self)
         self.sysinfo = sysinfo
-        self.client_channel = client_channel
+        self.c_channel = client_channel
         self.rootpath = sysinfo.meta_rootpath
 
     def run(self, ):
         while True:
-            req = self.client_channel.recv_request()
+            req = self.c_channel.recv_request()
             if req == None:
                 MogamiLog.debug("Connection closed")
-                self.client_channel.finalize()
+                self.c_channel.finalize()
                 break
 
             if req[0] == Channel.REQ_GETATTR:
@@ -127,7 +148,7 @@ class MogamiMetaHandler(System.MogamiDaemons):
                 self.mkdir(self.rootpath + req[1], req[2])
 
             elif req[0] == Channel.REQ_RMDIR:
-                MogamiLog.degbug("** rmdir **")
+                MogamiLog.debug("** rmdir **")
                 self.rmdir(self.rootpath + req[1])
 
             elif req[0] == Channel.REQ_UNLINK:
@@ -186,12 +207,12 @@ class MogamiMetaHandler(System.MogamiDaemons):
 
             elif req[0] == Channel.REQ_DATAADD:
                 MogamiLog.debug("** dataadd **")
-                ip = self.sock.getpeername()[0]
+                ip = self.c_channel.getpeername()
                 self.data_add(ip, req[1])
 
             elif req[0] == Channel.REQ_DATADEL:
                 MogamiLog.debug("** datadel **")
-                ip = self.sock.getpeername()[0]
+                ip = self.c_channel.getpeername()
                 self.data_del(ip)
 
             elif req[0] == Channel.REQ_RAMFILEADD:
@@ -213,7 +234,7 @@ class MogamiMetaHandler(System.MogamiDaemons):
 
         print "add data server IP:", ip
         print "Now %d data servers are." % len(self.sysinfo.data_list)
-        MogamiLog.info("delete data server IP:" % ip)
+        MogamiLog.info("delete data server IP: %s" % ip)
         MogamiLog.info("Now there are %d data servers." %
                        len(self.sysinfo.data_list))
 
@@ -223,7 +244,7 @@ class MogamiMetaHandler(System.MogamiDaemons):
         if ret == True:
             print "delete data server IP:", ip
             print "Now %d data servers are." % len(self.sysinfo.data_list)
-            MogamiLog.info("delete data server IP:" % ip)
+            MogamiLog.info("delete data server IP: %s" % ip)
             MogamiLog.info("Now there are %d data servers." %
                            len(self.sysinfo.data_list))
 
@@ -245,121 +266,121 @@ class MogamiMetaHandler(System.MogamiDaemons):
     # Mogami's actual metadata access APIs
     def getattr(self, path):
         MogamiLog.debug("path = %s" % path)
+
+        # get result of stat (ans and st)
         try:
             st = os.lstat(path)
+            ans = 0
         except os.error, e:
             MogamiLog.debug("stat error!")
-            senddata = (e.errno, None)
-            self.c_channel.send_header(senddata)
-            return
+            ans = e.errno
+            st = None
 
+        # get file size
         if os.path.isfile(path):
             try:
-                senddata = (0, st, string.atol(l[2]))
+                fsize = meta_file_info(path)[2]
             except Exception, e:
+                fsize = 0
                 MogamiLog.error()
         else:
-            senddata = (0, st, -1)
-        self.c_channel.send_header(senddata)
+            fsize = -1
+
+        self.c_channel.getattr_answer(ans, st, fsize)
 
     def readdir(self, path):
         MogamiLog.debug('path=%s' % (path))
         try:
             l = os.listdir(path)
-            senddata = [0, l]
+            ans = 0
         except os.error, e:
-            senddata = [e.errno, "null"]
-            print 'error!'
-        channel.send_header(cPickle.dumps(senddata), self.sock)
+            l = None
+            ans = e.errno
+            MogamiLog.debug("readdir error")
+
+        self.c_channel.readdir_answer(ans, l)
 
     def access(self, path, mode):
-        MogamiLog.debug('path=%s' % (path))
+        MogamiLog.debug("path = %s" % (path))
         try:
             if os.access(path, mode) == True:
-                senddata = True
+                ans = 0
             else:
-                senddata = False
+                ans = errno.EACCES
         except os.error, e:
-            senddata = False
-        channel.send_header(cPickle.dumps(senddata), self.sock)
+            ans = e.errno
+
+        self.c_channel.access_answer(ans)
 
     def mkdir(self, path, mode):
-        MogamiLog.debug("path=%s mode=%o" % (path, mode))
+        MogamiLog.debug("path = %s mode = %o" % (path, mode))
         try:
             os.mkdir(path, mode)
-            senddata = 0
+            ans = 0
         except os.error, e:
-            senddata = e.errno
-        channel.send_header(cPickle.dumps(senddata), self.sock)
+            ans = e.errno
+        self.c_channel.mkdir_answer(ans)
 
     def rmdir(self, path):
         MogamiLog.debug("path=%s" % (path))
         try:
             os.rmdir(path)
-            senddata = 0
+            ans = 0
         except os.error, e:
-            senddata = e.errno
-        channel.send_header(cPickle.dumps(senddata), self.sock)
+            ans = e.errno
+        self.c_channel.rmdir_answer(ans)
 
     def unlink(self, path):
-        # TODO
         MogamiLog.debug("path = %s" % path)
         if os.path.isfile(path):
             try:
-                f = open(path, 'r')
-                buf = f.read()
-                f.close()
-                l = buf.rsplit(',')
-                if l[0] in delfile_dict:
-                    delfile_dict[l[0]].append(l[1])
-                else:
-                    delfile_dict[l[0]] = [l[1], ]
+                (dest, data_path, fsize) = meta_file_info(path)
+                self.sysinfo.add_delfile(dest, data_path)
             except Exception, e:
-                ans = e.errno
+                MogamiLog.error("cannot remove file contents of %s", path)
         try:
             os.unlink(path)
-            senddata = 0
+            ans = 0
         except os.error, e:
-            senddata = e.errno
+            ans = e.errno
 
-        self.c_channel.send_header(senddata)
+        self.c_channel.unlink_answer(ans)
 
     def rename(self, oldpath, newpath):
         MogamiLog.debug(oldpath + ' -> ' + newpath)
         try:
             os.rename(oldpath, newpath)
-            senddata = 0
+            ans = 0
         except os.error, e:
-            senddata = e.errno
-        channel.send_header(cPickle.dumps(senddata), self.sock)
+            ans = e.errno
+        self.c_channel.rename_answer(ans)
 
     def chmod(self, path, mode):
-        MogamiLog.debug('path=%s w/ mode %o' % (path, mode))
+        MogamiLog.debug("path = %s w/ mode %o" % (path, oct(mode)))
         try:
             os.chmod(path, mode)
-            senddata = 0
+            ans = 0
         except os.error, e:
-            senddata = e.errno
-        channel.send_header(cPickle.dumps(senddata), self.sock)
+            ans = e.errno
+        self.c_channel.chmod_answer(ans)
 
     def chown(self, path, uid, gid):
         MogamiLog.debug("path=%s uid=%d gid=%d" % (path, uid, gid))
         try:
             os.chown(path, uid, gid)
-            senddata = 0
+            ans = 0
         except os.error, e:
-            senddata = e.errno
-        channel.send_header(cPickle.dumps(senddata), self.sock)
+            ans = e.errno
+        self.c_channel.chown_answer(ans)
 
-    def truncate(self, path, len):
+    def truncate(self, path, length):p
         """truncate handler.
 
-        @param path file path
-        @param len length of output file
+        @param path file path to truncate
+        @param length length of output file
         """
-        MogamiLog.debug("path = %s, length = %d" % (path, len))
+        MogamiLog.debug("path = %s, length = %d" % (path, length))
         try:
-            #TODO: exception handling
             f = open(path, 'r+')
             buf = f.read()
             l = buf.rsplit(',')
@@ -368,21 +389,28 @@ class MogamiMetaHandler(System.MogamiDaemons):
             f.seek(0)
             f.write(buf)
             f.close()
-            senddata = [0, l[0], l[1]]
+            ans = 0
+            dest = l[0]
+            data_path = l[1]
         except IOError, e:
-            senddata = [e.errno, ]
+            ans = e.errno
+            dest = None
+            data_path = None
         except Exception, e:
-            senddata = [e.errno, ]
-        channel.send_header(cPickle.dumps(senddata), self.sock)
+            ans = e.errno
+            dest = None
+            data_path = None
+
+        self.c_channel.truncate_answer(ans, dest, data_path)
 
     def utime(self, path, times):
         MogamiLog.debug("path = %s, times = %s" % (path, str(times)))
         try:
             os.utime(path, times)
-            senddata = 0
+            ans = 0
         except os.error, e:
-            senddata = e.errno
-        channel.send_header(cPickle.dumps(senddata), self.sock)
+            ans = e.errno
+        self.c_channel.utime_answer(ans)
 
     def open(self, path, flag, mode):
         """open handler.
@@ -395,102 +423,92 @@ class MogamiMetaHandler(System.MogamiDaemons):
             # When the required file exist...
             try:
                 MogamiLog.debug("!!find the file %s w/ %o" % (path, flag))
-                fd = 0
                 if mode:
                     fd = os.open(path, os.O_RDWR, mode[0])
                 else:
                     fd = os.open(path, os.O_RDWR)
-                    MogamiLog.debug("fd = %d" % (fd))
+                MogamiLog.debug("fd = %d" % (fd))
                 buf = os.read(fd, conf.bufsize)
                 l = buf.rsplit(',')
-                dist = l[0]
-                filename = l[1]
-                size = string.atol(l[2])
-                senddata = [0, dist, fd, size, filename]
+
+                # create data to send
+                ans = 0
+                dest = l[0]
+                data_path = l[1]
+                fsize = string.atol(l[2])
+                created = False
             except os.error, e:
                 MogamiLog.debug("!!find the file but error for %s (%s)" %
                                 (path, e))
-                senddata = [e.errno, 'null', 'null', 'null', 'null']
-                dist = None
+                ans = e.errno
+                dest = None
+                fd = None
+                data_path = None
+                fsize = None
+                created = False
 
             # case of client has file data
-            if dist == self.sock.getpeername()[0]:
-                for data in datalist:
-                    if data[0] == dist:
-                        senddata = [0, 'self', fd, filename]
-                        break
+            if dest == self.c_channel.getpeername():
+                dest = "self"
 
-            channel.send_header(cPickle.dumps(senddata), self.sock)
+            self.c_channel.open_answer(ans, dest, metafd,
+                                       fsize, data_path, created)
         else:
             # creat new file
             MogamiLog.debug("can't find the file so create!!")
             try:
-                fd = 0
+                fsize = 0
                 if mode:
                     fd = os.open(path, os.O_RDWR | os.O_CREAT, mode[0])
                 else:
                     fd = os.open(path, os.O_RDWR | os.O_CREAT)
-            except os.error, e:
-                print "!! have fatal error @1!! (%s)" % (e)
-                raise
-            try:
-                rand = 0
-                if len(datalist) > 0:
-                    rand = random.randint(0, len(datalist) - 1)
-                else:
+                dest = self.sysinfo.choose_data_server(
+                    self.c_channel.getpeername())
+                if dest == None:
                     print "!! There are no data server to create file !!"
-                dist = datalist[rand][0]
                 filename = ''.join(random.choice(string.letters)
                                    for i in xrange(16))
-                if os.path.basename(path) in ramfile_list:
-                    # if the file is registered at ramfile list
-                    filename = os.path.join("/dev/shm/mogami-tmp",
-                                            filename)
-                else:
-                    filename = os.path.join(datalist[rand][1], filename)
-                MogamiLog.debug("filename is %s" % (filename,))
-                buf = dist + ',' + filename + ',' + '0'
-            except Exception, e:
-                print "!! have fatal error @2!! (%s)" % (e)
-                raise
-            MogamiLog.debug("fd = " + str(fd))
+                data_path = os.path.join(
+                    self.sysinfo.data_rootpath(dest), filename)
 
-            if conf.write_local == True:
-                for data in datalist:
-                    if data[0] == self.sock.getpeername()[0]:
-                        # if client is also data server
-                        dist = data[0]
-                        buf = dist + ',' + filename + ',' + '0'
-                        break
+                MogamiLog.debug("filename is %s" % (data_path,))
 
-            try:
+                # write metadata
+                buf = dest + ',' + data_path + ',' + str(size)
                 os.write(fd, buf)
                 os.fsync(fd)
+                ans = 0
+                created = True
             except os.error, e:
-                print "!! have fatal error @3!! (%s)" % (e)
-                raise
-            size = 0
-            senddata = [0, dist, fd, size, filename]
+                print "!! have fatal error @1!! (%s)" % (e)
+                ans = e.errno
+                dest = None
+                fd = None
+                data_path = None
+                fsize = None
+                created = False
+            except Exception, e:
+                print "!! have fatal error @2!! (%s)" % (e)
+                ans = e.errno
+                dest = None
+                fd = None
+                data_path = None
+                fsize = None
+                created = False
 
             # case of client has file data
-            if dist == self.sock.getpeername()[0]:
-                for data in datalist:
-                    if data[0] == dist:
-                        senddata = [0, 'self', fd, filename]
-                        break
+            if dest == self.c_channel.getpeername():
+                dest = "self"
 
-            channel.send_header(cPickle.dumps(senddata), self.sock)
+            self.c_channel.open_answer(ans, dest, fd, fsize, data_path, created)
 
     def release(self, fd, fsize):
         """release handler.
 
-        ToDo: exception handling
-        ToDo: calculation of writelen
         @param fd file discripter
         @param writelen size of data to be written
         """
         os.lseek(fd, 0, os.SEEK_SET)
-#            print "fd = " + str(fd)
         try:
             buf = os.read(fd, conf.bufsize)
         except os.error, e:
@@ -511,11 +529,10 @@ class MogamiMetaHandler(System.MogamiDaemons):
                 print "OSError in release (%s)" % (e)
 
         os.close(fd)
-        senddata = 0
-        channel.send_header(cPickle.dumps(senddata), self.sock)
+        ans = 0
+        self.c_channel.release_answer(ans)
 
     def fgetattr(self, fd):
-        print fd
         try:
             st = os.fstat(fd)
             senddata = [0, st]

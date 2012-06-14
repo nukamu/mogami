@@ -1,11 +1,6 @@
 #! /usr/bin/env python
 #-*- coding: utf-8 -*-
 
-from libs import Channel
-from libs import System
-from System import MogamiLog
-from conf import conf
-
 import os
 import os.path
 import sys
@@ -21,6 +16,13 @@ import cPickle
 import cStringIO
 
 import atexit    # for leave from meta data sever list
+
+sys.path.append(os.pardir)
+
+from libs import Channel
+from libs import System
+from libs.System import MogamiLog
+from conf import conf
 
 
 class MogamiDataHandler(System.MogamiDaemons):
@@ -238,7 +240,7 @@ class MogamiData(object):
 
         # At first, connect to metadata server and send request to attend.
         self.m_channel = Channel.MogamiChanneltoMeta()
-        self.m_channel.connect(self.metaaddr, conf.metaport)
+        self.m_channel.connect(self.metaaddr)
         MogamiLog.debug("Success in creating connection to metadata server")
         self.m_channel.dataadd_req(self.rootpath)
 

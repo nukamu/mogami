@@ -29,7 +29,9 @@ from libs import Channel
 from libs import DBMng
 from libs import System
 from libs import Tips
+from libs import FileManager
 from libs.System import MogamiLog
+
 
 m_channel = Channel.MogamiChanneltoMeta()
 daemons = []
@@ -91,10 +93,11 @@ class MogamiFS(Fuse):
         if ans != 0:
             return -ans
         else:
-            st = tips.MogamiStat()
+            st = FileManager.MogamiStat()
             st.load(ret_st)
             if fsize >= 0:
                 st.chsize(fsize)
+            # if file_size_dict has cache of file size, replace it
             if path in file_size_dict:
                 MogamiLog.debug("path = %s, change size from %d to %d" %
                                 (path, fsize, file_size_dict[path]))
@@ -103,21 +106,26 @@ class MogamiFS(Fuse):
 
     def readdir(self, path, offset):
         MogamiLog.debug("** readdir ** path = %s, offset = %s" %
-                        (path + str(offset)))
+                        (path, str(offset)))
 
-        ans = m_channel.readdir_req(path, offset)
+        (ans, contents) = m_channel.readdir_req(path, offset)
         l = ['.', '..']
-        if ans[0] == 0:
-            l.extend(ans[1])
+        if ans == 0:
+            l.extend(contents)
             return [fuse.Direntry(ent) for ent in l]
         else:
-            return -ans[0]
+            return -ans
 
     def access(self, path, mode):
+        """access handler.
+
+        @param path path to access
+        @param mode mode to access
+        @return 0 on success, errno on error
+        """
         MogamiLog.debug("** access **" + path + str(mode))
         ans = m_channel.access_req(path, mode)
-        if ans != True:
-            return -errno.EACCES
+        return -ans
 
     def mkdir(self, path, mode):
         """mkdir handler.
@@ -128,16 +136,14 @@ class MogamiFS(Fuse):
         """
         MogamiLog.debug("** mkdir **" + path + str(mode))
         ans = m_channel.mkdir_req(path, mode)
-        if ans != 0:
-            return -ans
+        return -ans
 
     def rmdir(self, path):
         """rmdir handler.
         """
         MogamiLog.debug("** rmdir **" + path)
         ans = m_channel.rmdir_req(path)
-        if ans != 0:
-            return -ans
+        return -ans
 
     def unlink(self, path):
         """unlink handler.
@@ -146,8 +152,7 @@ class MogamiFS(Fuse):
         """
         MogamiLog.debug("** unlink ** path = %s" % (path, ))
         ans = m_channel.nulink_req(path)
-        if ans != 0:
-            return -ans
+        return -ans
 
     def rename(self, oldpath, newpath):
         """rename handler.
@@ -193,14 +198,13 @@ class MogamiFS(Fuse):
         ans = c_channel.truncate_req(path, length)
         c_channel.finalize()
 
-        # if truncate was succeeded, file size should be changed
+        # if truncate was succeeded, cache of file size should be changed
         if ans == 0:
             file_size_dict[path] = length
         return -ans
 
     def utime(self, path, times):
         MogamiLog.debug('** utime **' + path + str(times))
-
         ans = m_channel.utime_req(path, times)
         if ans != 0:
             return -ans
@@ -218,29 +222,28 @@ class MogamiFS(Fuse):
             """
             MogamiLog.debug("** open ** path = %s, flag = %s, mode = %s" %
                             (path, str(flag), str(mode)))
-            ans = m_channel.open_req(path, flag, *mode)
-            MogamiLog.debug("open ans (from meta)" + str(ans))
+            (ans, dest, metafd, fsize, data_path, created) = m_channel.open_req(
+                path, flag, *mode)
+            if ans != 0:  # error on metadata server
+                e = IOError()
+                e.errno = ans
+                raise e
 
-            # parse answer from metadata server
-            dest = ans[1]
-            metafd = ans[2]
-            size = ans[3]
-            data_path = ans[4]
-
-            if ans[1] == 'self':
-                self.mogami_file = tips.MogamiLocalFile(
-                    path, size, data_path, flag, *mode)
+            if dest == 'self':
+                self.mogami_file = FileManager.MogamiLocalFile(
+                    path, fsize, data_path, created, flag, *mode)
             else:
-                self.mogami_file = tips.MogamiRemoteFile(
-                    path, size, dest, data_path, flag, *mode)
-                (ans, rtt) = self.create_connections()
+                self.mogami_file = FileManager.MogamiRemoteFile(
+                    path, fsize, dest, data_path, created, flag, *mode)
+                ans = self.create_connections()
                 if ans != 0:
-                    print "open error !!"
-                    return
-                self.mogami_file.rtt = rtt
+                    MogamiLog.error("open error !!")
+                    e = IOError()
+                    e.errno = ans
+                    raise e
 
             # register file size to file size dictionary
-            file_size_dict[path] = size
+            file_size_dict[path] = fsize
 
             """Get Id list to know pid.
             list = {gid: pid: uid}
@@ -253,11 +256,12 @@ class MogamiFS(Fuse):
                 self.cmd_args = f.read().rsplit('\x00')[:-1]
                 print self.cmd_args
             except Exception, e:
+                # with any error, pass this part of process
                 pass
 
-            self.preth = System.MogamiPrefetchThread(self)
-            self.preth.start()
-            daemons.append(self.preth)
+            self.recvth = System.MogamiPrefetchThread(self)
+            self.recvth.start()
+            daemons.append(self.recvth)
             self.access_pattern = Tips.MogamiFileAccessPattern()
 
         def read(self, length, offset):
@@ -271,12 +275,10 @@ class MogamiFS(Fuse):
 
             # check access pattern
             self.access_pattern.check_mode(offset, length)
+            self.access_pattern.change_info(offset, ret_str.tell(),
+                                            last_readbl)
 
-            self.mogami_file.read(length, offset)
-
-
-            # ask for prefetch data
-            start_t = time.time()
+            """
             if conf.prefetch == True:
                 if last_readbl != self.access_pattern.last_bl:
                     #MogamiLog.debug("read: prenum %d \n" % (self.prenum))
@@ -293,29 +295,9 @@ class MogamiFS(Fuse):
                             blnum_list.append(prereq)
                     if len(blnum_list) != 0:
                         self.request_prefetch(blnum_list)
-            end_t = time.time()
-            self.calc_time += end_t - start_t
+            self.calc_time += end_t - start_t"""
 
-            if conf.prefetch == True:
-                self.access_pattern.change_info(offset, ret_str.tell(),
-                                                last_readbl)
-            return ret_str.getvalue()
-
-
-        def request_prefetch(self, blnum_list):
-            """function to send a request of prefetch.
-
-            @param blnum_list block number list to prefetch
-            """
-            MogamiLog.debug('** prefetch' + str(blnum_list))
-            senddata = ['prefetch', self.datafd, blnum_list]
-
-            with self.r_buflock:
-                for blnum in blnum_list:
-                    self.bldata[blnum].state = 1
-
-            with self.plock:
-                channel.send_header(cPickle.dumps(senddata), self.psock)
+            return self.mogami_file.read(length, offset)
 
         def write(self, buf, offset):
             if self.size < offset + len(buf):
@@ -374,12 +356,13 @@ class MogamiFS(Fuse):
             return ans
 
         def flush(self, ):
-            self.mogami_file.flush()
-            return 0
+            ans = self.mogami_file.flush()
+            return ans
 
         def fsync(self, isfsyncfile):
-            self.mogami_file.fsync()
-            
+            ans = self.mogami_file.fsync()
+            return ans
+
         def release(self, flags):
             size = self.mogami_file.release()
 

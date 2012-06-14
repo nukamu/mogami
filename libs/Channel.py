@@ -85,8 +85,13 @@ class MogamiChannel(object):
         # lock for the socket
         self.lock = threading.Lock()
 
+        self.peername = None
+
     def unix_connect(self, path):
-        """
+        """This function might be replaced to connect,
+        if the type of self_channel is TYPE_UNIX.
+
+        @param path path of named pipe to connect
         """
         self.sock.connect(path)
 
@@ -105,9 +110,15 @@ class MogamiChannel(object):
         """
         self.sock = sock
 
+    def getpeername(self, ):
+        if self.peername == None:
+            self.peername = self.sock.getpeername()[0]
+        return self.peername
+
     def sendall(self, data):
         """send all data
 
+        This function may return errno, when send error occurs.
         @param data data to send
         """
         try:
@@ -122,7 +133,7 @@ class MogamiChannel(object):
 
         This function may return less data than required.
         (when connection closed)
-        @param length length of required data
+        @param length length of data to receive
         """
         buf = cStringIO.StringIO()
         recvlen = 0
@@ -130,11 +141,11 @@ class MogamiChannel(object):
             try:
                 recvdata = self.sock.recv(length - recvlen)
             except Exception, e:
-                MogamiLog.debug("** Connection closed suddenly **")
-                sock.close()
+                MogamiLog.error("** Connection closed suddenly **")
+                self.sock.close()
                 break
             if recvdata == "":
-                sock.close()
+                self.sock.close()
                 break
             buf.write(recvdata)
             recvlen += len(recvdata)
@@ -167,43 +178,47 @@ class MogamiChannel(object):
         ret = cPickle.loads(res_buf.getvalue())
         return ret
 
-    def recvall_with_time(sock, length):
-        """
+    def recvall_with_time(self, length):
+        """receive data and measure time to receive
+
+        This function seems to be called only in prefetching.
+        @param length length of data to receive
         """
         buf = cStringIO.StringIO()
         recvlen = 0
         recv_time = 0
         while recvlen < length:
-            if length - recvlen >= 4096:
+            try:
                 start_t = time.time()
-                recvdata = sock.recv(4096)
+                recvdata = self.sock.recv(length - recvlen)
                 end_t = time.time()
-            else:
-                start_t = time.time()
-                recvdata = sock.recv(length - recvlen)
-                end_t = time.time()
-            recv_time += end_t - start_t
+            except Exception, e:
+                MogamiLog.error("** Connection closed suddenly **")
+                self.sock.close()
+                break
             if recvdata == "":
-                sock.close()
+                self.sock.close()
                 break
             buf.write(recvdata)
             recvlen += len(recvdata)
-
+            recv_time += end_t - start_t
         return (buf.getvalue(), recv_time)
 
     def finalize(self, ):
+        """finalizer of mogami channel.
+        """
         self.sock.close()
 
 
 class MogamiChanneltoMeta(MogamiChannel):
     """
     """
-    def __init__(self, *con_info):
+    def __init__(self, *dest):
         """
         """
         MogamiChannel.__init__(self)
-        if len(con_info) > 0:
-            self.connect(con_info[0], conf.metaport)
+        if len(dest) > 0:
+            self.connect(dest[0], conf.metaport)
 
     def connect(self, meta_ip):
         MogamiChannel.connect(self, meta_ip, conf.metaport)
@@ -212,24 +227,28 @@ class MogamiChanneltoMeta(MogamiChannel):
         with self.lock:
             self.send_msg((REQ_GETATTR, path))
             ans = self.recv_msg()
+        # (0 or errno, st, fsize)
         return ans
 
     def readdir_req(self, path, offset):
         with self.lock:
             self.send_msg((REQ_READDIR, path, offset))
             ans = self.recv_msg()
+        # (0 or errno, list_of_contents)
         return ans
 
     def access_req(self, path, mode):
         with self.lock:
             self.send_msg((REQ_ACCESS, path, mode))
             ans = self.recv_msg()
+        # 0 or errno
         return ans
 
     def mkdir_req(self, path, mode):
         with self.lock:
             self.send_msg((REQ_MKDIR, path, mode))
             ans = self.recv_msg()
+        # 0 or errno
         return ans
 
     def rmdir_req(self, path):
@@ -243,12 +262,14 @@ class MogamiChanneltoMeta(MogamiChannel):
         with self.lock:
             self.send_msg((REQ_UNLINK, path))
             ans = self.recv_msg()
+        # 0 or errno
         return ans
 
     def rename_req(self, oldpath, newpath):
         with self.lock:
             self.send_msg((REQ_RENAME, oldpath, newpath))
             ans = self.recv_msg()
+        # 0 or errno
         return ans
 
     def chmod_req(self, path, mode):
@@ -371,17 +392,17 @@ class MogamiChannelforMeta(MogamiChannelforServer):
         with self.lock:
             self.send_msg(ans)
 
-    def truncate_answer(self, ans):
+    def truncate_answer(self, ans, dest, data_path):
         with self.lock:
-            self.send_msg(ans)
+            self.send_msg((ans, dest, data_path))
 
     def utime_answer(self, ans):
         with self.lock:
             self.send_msg(ans)
 
-    def open_answer(self, ans, dest, metafd, size, data_path):
+    def open_answer(self, ans, dest, metafd, size, data_path, created):
         with self.lock:
-            self.send_msg((ans, dest, metafd, size, data_path))
+            self.send_msg((ans, dest, metafd, size, data_path, created))
 
     def release_answer(self, ans):
         with self.lock:

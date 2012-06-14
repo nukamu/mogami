@@ -3,6 +3,11 @@
 
 import os
 
+from fuse import Fuse
+import fuse
+fuse.fuse_python_api = (0, 2)
+
+
 class MogamiStat(fuse.Stat):
     attrs = ("st_mode", "st_ino", "st_dev", "st_nlink",
              "st_uid", "st_gid", "st_size",
@@ -74,18 +79,19 @@ class MogamiRamFile(object):
 class MogamiRemoteFile(MogamiFile):
     """Class for a file located at remote node
     """
-    def __init__(self, path, size, dest, data_path, flag, *mode):
-        MogamiFile.__init__(self, path, size)
+    def __init__(self, path, fsize, dest, data_path, created, flag, *mode):
+        MogamiFile.__init__(self, path, fsize)
         self.dest = dest
         self.data_path = data_path
         self.flag = flag
         self.mode = mode
         self.remote = True
         self.prenum = 1
+        self.created = created
 
         # initialization of read buffer
-        self.blnum = self.size / conf.blsize
-        if self.size % conf.blsize != 0:
+        self.blnum = self.fsize / conf.blsize
+        if self.fsize % conf.blsize != 0:
             self.blnum += 1
         self.bldata = tuple([MogamiBlock() for i in range(self.blnum + 1)])
         self.r_buflock = threading.Lock()
@@ -104,29 +110,34 @@ class MogamiRemoteFile(MogamiFile):
         """
         # create a connection for data transfer
         try:
-            self.channel = Channel.MogamiChanneltoData(self.dest)
+            self.d_channel = Channel.MogamiChanneltoData(self.dest)
         except Exception, e:
-            return (e.errno, None)
+            return e.errno
         # create a connection for prefetching
         try:
             self.p_channel = Channel.MogamiChanneltoData(self.dest)
         except Exception, e:
-            return (e.errno, None)
+            return e.errno
 
         # send a request to data server for open
         start_t = time.time()
-        ans = self.channel.open_req(self.data_path, self.flag, self.mode)
+        (ans, self.datafd, open_t) = self.d_channel.open_req(
+            self.data_path, self.flag, self.mode)
         end_t = time.time()
-        if ans[0] != 0:  # failed
-            return (ans[0], None)
+        if ans != 0:  # failed...with errno
+            self.finalize()
+            return ans
 
-        # success
-        self.datafd = ans[1]
-        # return (answer from data server, rtt)
-        return (ans[0], end_t - start_t - ans[2])
+        # on success
+        self.rtt = end_t - start_t - open_t
+        return ans
+
+    def finalize(self, ):
+        pass
 
     def read(self, length, offset):
         requestl = self.cal_bl(offset, length)
+
         # prepare buffer to return
         ret_str = cStringIO.StringIO()
         MogamiLog.debug("requestl = %s, with offset: %d, length: %d" %
@@ -199,13 +210,12 @@ class MogamiRemoteFile(MogamiFile):
         self.channel.finalize()
         self.p_chanel.finalize()
 
-    def finalize(self, ):
-        pass
-
-
     def request_block(self, blnum):
-        """This function is used when client send request of block data.
+        """send request of block data.
+        
+        @param blnum the number of block to require
         """
+
         senddata = ['read', self.datafd, blnum]
         MogamiLog.debug("** read %d block" % (blnum))
         self.r_buflock.acquire()
@@ -216,6 +226,20 @@ class MogamiRemoteFile(MogamiFile):
         with self.plock:
             channel.send_header(cPickle.dumps(senddata), self.psock)
         return 0
+
+    def request_prefetch(self, blnum_list):
+        """send request of prefetch.
+
+        @param blnum_list the list of block numbers to prefetch
+        """
+        MogamiLog.debug("** prefetch ** required blocks = %s" % 
+                        (str(blnum_list)))
+        # send request to data server
+        self.d_channel.prefetch_req(self.datafd, blnum_list)
+
+        with self.r_buflock:
+            for blnum in blnum_list:
+                self.bldata[blnum].state = 1
 
     def cal_bl(self, offset, size):
         """This function is used for calculation of request block number.
