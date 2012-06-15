@@ -39,25 +39,26 @@ REQ_FSYNC = 15
 REQ_OPEN = 16
 REQ_CREATE = 17
 REQ_READ = 18
-REQ_FLUSH = 19
-REQ_RELEASE = 20
-REQ_FGETATTR = 21
-REQ_FTRUNCATE = 22
+REQ_PREFETCH = 19
+REQ_FLUSH = 20
+REQ_RELEASE = 21
+REQ_FGETATTR = 22
+REQ_FTRUNCATE = 23
 
 # requests related to Mogami's system
-REQ_CLOSE = 23
-REQ_DATAADD = 24
-REQ_DATADEL = 25
-REQ_RAMFILEADD = 26
-REQ_RAMFILEDEL = 27
-REQ_FILEDEL = 28
-REQ_FILEASK = 29
+REQ_CLOSE = 24
+REQ_DATAADD = 25
+REQ_DATADEL = 26
+REQ_RAMFILEADD = 27
+REQ_RAMFILEDEL = 28
+REQ_FILEDEL = 29
+REQ_FILEASK = 30
 
 # requests related to scheduler
-REQ_ADDAP = 30
-REQ_SCHEDULE = 31
+REQ_ADDAP = 31
+REQ_SCHEDULE = 32
 
-# Channel's type
+# channel's type
 TYPE_TCP = 0
 TYPE_UNIX = 1
 
@@ -214,8 +215,6 @@ class MogamiChanneltoMeta(MogamiChannel):
     """
     """
     def __init__(self, *dest):
-        """
-        """
         MogamiChannel.__init__(self)
         if len(dest) > 0:
             self.connect(dest[0], conf.metaport)
@@ -290,7 +289,7 @@ class MogamiChanneltoMeta(MogamiChannel):
         with self.lock:
             self.send_msg((REQ_TRUNCATE, path, length))
             ans = self.recv_msg()
-        # (0 or errno, dest, filaname)
+        # (0 or errno, dest, data_path)
         return ans
 
     def utime_req(self, path, times):
@@ -304,7 +303,14 @@ class MogamiChanneltoMeta(MogamiChannel):
         with self.lock:
             self.send_msg((REQ_OPEN, path, flags, mode))
             ans = self.recv_msg()
-        # (0 or errno, dist, metafd, datapath, size, created)
+        # (0 or errno, dest, metafd, datapath, size, created)
+        return ans
+
+    def release_req(self, metafd, fsize):
+        with self.lock:
+            self.send_msg((REQ_RELEASE, metafd, fsize))
+            ans = self.recv_msg()
+        # 0 or errno
         return ans
 
     def dataadd_req(self, rootpath):
@@ -319,34 +325,51 @@ class MogamiChanneltoMeta(MogamiChannel):
 class MogamiChanneltoData(MogamiChannel):
     """
     """
-    def __init__(self, *con_info):
+    def __init__(self, *dest):
         MogamiChannel.__init__(self)
-        if len(con_info) > 0:
-            self.connect(con_info[0], conf.dataport)
+        if len(dest) > 0:
+            self.connect(dest[0], conf.dataport)
 
-    def open_req(self, datapath, created, flags, *mode):
+    def open_req(self, datapath, flags, *mode):
         with self.lock:
-            self.send_msg((REQ_OPEN, datapath, created, flags, mode))
+            self.send_msg((REQ_OPEN, datapath, flags, mode))
             ans = self.recv_msg()
-        # (0 or errno, time to open)
+        # (0 or errno, datafd, time to open)
         return ans
 
     def read_req(self, datafd, blnum):
         with self.lock:
             self.send_msg((REQ_READ, datafd, blnum))
-            ans = self.recv_msg()
-            # ans = (0 or errno, blnum, size)
-            bldata = self.recvall(size)
-        return (ans, bldata)
 
     def prefetch_req(self, datafd, blnum_list):
         with self.lock:
             self.send_msg((REQ_PREFETCH, datafd, blnum_list))
 
-    def flush_req(self, datafd):
+    def flush_req(self, datafd, w_list, w_data):
+        w_list_pickled = cPickle.dumps(w_list)
         with self.lock:
-            self.send_msg((REQ_FLUSH, datafd, ))
+            self.send_msg((REQ_FLUSH, datafd, len(w_list_pickled), len(w_data)))
+            self.sendall(w_list_pickled)
+            self.sendall(w_data)
+            ans = self.recv_msg()
+        return ans
 
+    def recv_bldata(self, ):
+        pass
+
+    def truncate_req(self, path, length):
+        with self.lock:
+            self.send_msg((REQ_TRUNCATE, path, length))
+            ans = self.recv_msg()
+        # 0 or errno
+        return ans
+
+    def release_req(self, datafd):
+        with self.lock:
+            self.send_msg((REQ_RELEASE, datafd))
+            ans = self.recv_msg()
+        # (0 or errno, fsize)
+        return ans
 
 class MogamiChannelforServer(MogamiChannel):
 
@@ -400,9 +423,9 @@ class MogamiChannelforMeta(MogamiChannelforServer):
         with self.lock:
             self.send_msg(ans)
 
-    def open_answer(self, ans, dest, metafd, size, data_path, created):
+    def open_answer(self, ans, dest, fd, data_path, size, created):
         with self.lock:
-            self.send_msg((ans, dest, metafd, size, data_path, created))
+            self.send_msg((ans, dest, fd, data_path, size, created))
 
     def release_answer(self, ans):
         with self.lock:
@@ -414,9 +437,9 @@ class MogamiChannelforData(MogamiChannelforServer):
         with self.lock:
             self.send_msg(ans)
 
-    def open_answer(self, ans, t_time):
+    def open_answer(self, ans, datafd, t_time):
         with self.lock:
-            self.send_msg((ans, t_time))
+            self.send_msg((ans, datafd, t_time))
 
     def data_send(self, ans, blnum, size, data):
         with self.lock:
@@ -437,17 +460,18 @@ class MogamiChannelforData(MogamiChannelforServer):
 
     def release_answer(self, ans, size):
         with self.lock:
-            self.send_msg(ans, size)
+            self.send_msg((ans, size))
 
     def filedel_answer(self, ans):
         with self.lock:
             self.send_msg(ans)
 
-class MogamiChannelforScheduler(MogamiChannel):
+
+class MogamiChanneltoTellAP(MogamiChannel):
     def __init__(self, path):
-        MogamiChannel.__init__(self)
+        MogamiChannel.__init__(self, TYPE_UNIX)
 
 
-class MogamiChanneltoScheduler(MogamiChannel):
+class MogamiChanneltoAskAP(MogamiChannel):
     def __init__(self, ):
-        pass
+        MogamiChannel.__init__(self, TYPE_UNIX)

@@ -37,7 +37,7 @@ def meta_file_info(path):
     if len(l) != 3:
         return (None, None, None)
     # (dest, data_path, fsize)
-    return (l[0], l[1], l[2])
+    return (l[0], l[1], int(l[2]))
 
 
 class MogamiSystemInfo(object):
@@ -63,7 +63,7 @@ class MogamiSystemInfo(object):
             self.data_list.append(ip)
             self.data_rootpath[ip] = rootpath
 
-    def data_rootpath(self, ip):
+    def get_data_rootpath(self, ip):
         """
         """
         try:
@@ -259,7 +259,7 @@ class MogamiMetaHandler(System.MogamiDaemons):
         MogamiLog.debug("add files = " + str(add_file_list))
 
     def remove_ramfiles(self, file_list):
-        """
+        """not implemented yet..
         """
         pass
 
@@ -280,9 +280,10 @@ class MogamiMetaHandler(System.MogamiDaemons):
         if os.path.isfile(path):
             try:
                 fsize = meta_file_info(path)[2]
+                MogamiLog.debug("%s's size is %d" % (path, fsize))
             except Exception, e:
                 fsize = 0
-                MogamiLog.error()
+                MogamiLog.error("error in meta_file_info")
         else:
             fsize = -1
 
@@ -293,6 +294,7 @@ class MogamiMetaHandler(System.MogamiDaemons):
         try:
             l = os.listdir(path)
             ans = 0
+            MogamiLog.debug("result = %s" % (str(l)))
         except os.error, e:
             l = None
             ans = e.errno
@@ -373,7 +375,7 @@ class MogamiMetaHandler(System.MogamiDaemons):
             ans = e.errno
         self.c_channel.chown_answer(ans)
 
-    def truncate(self, path, length):p
+    def truncate(self, path, length):
         """truncate handler.
 
         @param path file path to truncate
@@ -384,7 +386,7 @@ class MogamiMetaHandler(System.MogamiDaemons):
             f = open(path, 'r+')
             buf = f.read()
             l = buf.rsplit(',')
-            buf = "%s,%s,%s" % (l[0], l[1], str(len))
+            buf = "%s,%s,%s" % (l[0], l[1], str(length))
             f.truncate(0)
             f.seek(0)
             f.write(buf)
@@ -451,8 +453,8 @@ class MogamiMetaHandler(System.MogamiDaemons):
             if dest == self.c_channel.getpeername():
                 dest = "self"
 
-            self.c_channel.open_answer(ans, dest, metafd,
-                                       fsize, data_path, created)
+            self.c_channel.open_answer(ans, dest, fd,
+                                       data_path, fsize, created)
         else:
             # creat new file
             MogamiLog.debug("can't find the file so create!!")
@@ -469,12 +471,12 @@ class MogamiMetaHandler(System.MogamiDaemons):
                 filename = ''.join(random.choice(string.letters)
                                    for i in xrange(16))
                 data_path = os.path.join(
-                    self.sysinfo.data_rootpath(dest), filename)
+                    self.sysinfo.get_data_rootpath(dest), filename)
 
                 MogamiLog.debug("filename is %s" % (data_path,))
 
                 # write metadata
-                buf = dest + ',' + data_path + ',' + str(size)
+                buf = dest + ',' + data_path + ',' + str(fsize)
                 os.write(fd, buf)
                 os.fsync(fd)
                 ans = 0
@@ -500,7 +502,7 @@ class MogamiMetaHandler(System.MogamiDaemons):
             if dest == self.c_channel.getpeername():
                 dest = "self"
 
-            self.c_channel.open_answer(ans, dest, fd, fsize, data_path, created)
+            self.c_channel.open_answer(ans, dest, fd, data_path, fsize, created)
 
     def release(self, fd, fsize):
         """release handler.
@@ -596,7 +598,7 @@ class MogamiMeta(object):
         """This is the function of MogamiMeta's init.
         In this function,
         """
-        MogamiLog.init("meta", MogamiLog.INFO)
+        MogamiLog.init("meta", conf.meta_loglevel)
 
         self.sysinfo = MogamiSystemInfo(rootpath, mogami_dir)
 

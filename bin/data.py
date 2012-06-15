@@ -91,7 +91,7 @@ class MogamiDataHandler(System.MogamiDaemons):
         MogamiLog.debug("path = %s. length = %d" % (path, length))
         try:
             f = open(path, "r+")
-            f.truncate(len)
+            f.truncate(length)
             f.close()
             ans = 0
         except Exception, e:
@@ -99,7 +99,7 @@ class MogamiDataHandler(System.MogamiDaemons):
             ans = e.errno
         self.c_channel.truncate_answer(ans)
 
-    def open(self, path, created, flag, *mode):
+    def open(self, path, flag, *mode):
         start_t = time.time()
         MogamiLog.debug("path = %s, flag = %s, mode = %s" %
                         (path, str(flag), str(mode)))
@@ -108,12 +108,13 @@ class MogamiDataHandler(System.MogamiDaemons):
             fd = os.open(path, flag, *mode)
             ans = 0
         except Exception, e:
+            fd = None
             ans = e.errno
         end_t = time.time()
-        self.c_channel.open_answer(ans, end_t - start_t)
+        self.c_channel.open_answer(ans, fd, end_t - start_t)
 
     def read(self, fd, blnum):
-        MogamiLog.debug("fd = %d, bl_num = %d" % (fd, bl_num))
+        MogamiLog.debug("fd = %d, bl_num = %d" % (fd, blnum))
 
         sendbuf = ""
         try:
@@ -227,12 +228,6 @@ class MogamiData(object):
         # check directory for data files
         assert os.access(self.rootpath, os.R_OK and os.W_OK and os.X_OK)
 
-        # if possible, create a directory for tmpfs
-        try:
-            os.mkdir("/dev/shm/mogami-tmp")
-        except Exception:
-            pass
-
         # Initialization of Log.
         MogamiLog.init("data", conf.data_loglevel)
         MogamiLog.info("Start initialization...")
@@ -266,8 +261,8 @@ class MogamiData(object):
             (csock, address) = self.lsock.accept()
             MogamiLog.debug("accept connnect from " + str(address[0]))
 
-            client_channel = channel.MogamiChannelforData()
-            client_channel.set_sock(client_sock)
+            client_channel = Channel.MogamiChannelforData()
+            client_channel.set_socket(csock)
 
             datad = MogamiDataHandler(client_channel, self.rootpath)
             datad.name = "D%d" % (threads_count)

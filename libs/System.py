@@ -1,14 +1,22 @@
 #! /usr/bin/env python
 #-*- coding: utf-8 -*-
 
+from __future__ import with_statement
+
 import os
-import os.path
+import sys
+sys.path.append(os.pardir)
+
 from fuse import Fuse
 import fuse
 fuse.fuse_python_api = (0, 2)
 
-import logging, threading
+from conf import conf
+import logging
 import time
+import os.path
+import select
+import threading
 
 class MogamiDaemons(threading.Thread):
     def __init__(self, ):
@@ -34,78 +42,76 @@ class MogamiThreadCollector(MogamiDaemons):
                     self.daemons.remove(d)
             time.sleep(3)
 
-class MogamiPrefetchTread(MogamiDaemons):
+class MogamiPrefetchThread(MogamiDaemons):
     """
     """
-    def __init__(self, par):
+    def __init__(self, mogami_file):
         MogamiDaemons.__init__(self)
-        self.sock = par.psock
-        self.bldata = par.mogami_file.bldata
-        self.r_buflock = par.mogami_file.r_buflock
-        self.plock = par.mogami_file.plock
-        self.par = par
-        self.rtt = par.rtt
-
+        self.mogami_file = mogami_file
+        self.p_channel = mogami_file.p_channel
         MogamiLog.debug("** [prefetch thread] init OK")
 
     def run(self, ):
         pre_num_change = False
         time_list = []
         while True:
-            readable = select.select([self.sock.fileno()], [], [], 0)
+            readable = select.select(
+                [self.p_channel.sock.fileno()], [], [], 0)
             if len(readable[0]) == 0:
                 pre_num_change = True
             else:
                 pre_num_change = False
-            select.select([self.sock.fileno()], [], [])
-            buf = channel.recvall(self.sock, conf.bufsize)
-            if len(buf) != conf.bufsize:
+
+            select.select([self.p_channel.sock.fileno()], [], [])
+
+            header = self.p_channel.recv_msg()
+            if header == None:
                 MogamiLog.debug("break prefetch thread's loop")
-                self.bldata = None
+                self.mogami_file.r_data = None
                 break
 
-            l = cPickle.loads(buf)
-            errno = l[0]
-            blnum = l[1]
-            size = l[2]
+            errno = header[0]
+            blnum = header[1]
+            size = header[2]
 
             if size == 0:
-                with self.r_buflock:
-                    self.bldata[blnum].state = 2
-                    self.bldata[blnum].buf = ""
+                with self.mogami_file.r_buflock:
+                    self.mogami_file.r_data[blnum].state = 2
+                    self.mogami_file.r_data[blnum].buf = ""
                 continue
 
-            select.select([self.sock.fileno()], [], [])
+            select.select([self.p_channel.sock.fileno()], [], [])
             
-            (buf, recv_time) = channel.recvall_with_time(self.sock, size)
+            (buf, recv_time) = self.p_channel.recvall_with_time(size)
 
             if conf.prefetch == True:
                 time_list.append(recv_time)
+                eval_time = 0
                 if len(time_list) > 5:
                     time_list.pop(0)
-                    eval_time = 0
                 for t in time_list:
                     eval_time += t
                     eval_time /= len(time_list)
                 if len(buf) != size:
                     MogamiLog.debug("break prefetch thread's loop")
-                    self.bldata = None
+                    self.mogami_file.r_data = None
                     break
                 if pre_num_change == True:
                     recv_size = size / float(1024) / float(1024)
-                    self.par.prenum = int(recv_size / eval_time * self.rtt)
-                    self.par.prenum += 1
+                    self.mogami_file.prenum = int(recv_size / eval_time *
+                                          self.mogami_file.rtt)
+                    self.mogami_file.prenum += 1
                     MogamiLog.debug("prenum is changed to %d" %
-                                    (self.par.prenum))
+                                    (self.mogami_file.prenum))
                     MogamiLog.debug("time = %f, eval_time = %f" %
                                     (recv_time, eval_time))
 
                     MogamiLog.debug("prefetch recv %d byte bnum %d" %
                                     (len(buf), blnum))
-                if self.bldata != None:
-                    with self.r_buflock:
-                        self.bldata[blnum].state = 2
-                        self.bldata[blnum].buf = buf
+                if self.mogami_file.r_data != None:
+                    with self.mogami_file.r_buflock:
+                        self.mogami_file.r_data[blnum].state = 2
+                        self.mogami_file.r_data[blnum].buf = buf
 
 
 class Singleton(type):

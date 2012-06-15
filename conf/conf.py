@@ -1,7 +1,4 @@
-import os, sys
-sys.path.append(os.pardir)
-from libs.System import MogamiLog
-
+import logging
 
 """Define ports number used.
 There are three ports Mogami uses.
@@ -25,6 +22,6 @@ write_local=True
 
 multithreaded=True
 
-fs_loglevel=MogamiLog.INFO
-meta_loglevel=MogamiLog.INFO
-data_loglevel=MogamiLog.INFO
+fs_loglevel=logging.DEBUG
+meta_loglevel=logging.DEBUG
+data_loglevel=logging.DEBUG

@@ -1,9 +1,19 @@
 #! /usr/bin/env python
 #-*- coding: utf-8 -*-
 
-import os
+from __future__ import with_statement
 
+import os
+import sys
+sys.path.append(os.pardir)
+import threading
+import cStringIO
+import time
+
+from conf import conf
+from libs.System import MogamiLog
 from fuse import Fuse
+from libs import Channel
 import fuse
 fuse.fuse_python_api = (0, 2)
 
@@ -56,11 +66,13 @@ class MogamiBlock(object):
 class MogamiFile(object):
     """Class for a object of a file
     """
-    def __init__(self, size):
-        self.size = size
+    def __init__(self, fsize):
+        self.fsize = fsize
 
 class MogamiRamFile(object):
     """Class for managing a content of file on memory.
+
+    This class is not implemented completely.
     """
 
     def __init__(self, size):
@@ -79,34 +91,39 @@ class MogamiRamFile(object):
 class MogamiRemoteFile(MogamiFile):
     """Class for a file located at remote node
     """
-    def __init__(self, path, fsize, dest, data_path, created, flag, *mode):
-        MogamiFile.__init__(self, path, fsize)
+    def __init__(self, fsize, dest, data_path, flag, *mode):
+        MogamiFile.__init__(self, fsize)
+        self.remote = True
         self.dest = dest
         self.data_path = data_path
         self.flag = flag
         self.mode = mode
-        self.remote = True
-        self.prenum = 1
-        self.created = created
 
-        # initialization of read buffer
+        self.prenum = 1
+
+        # calculation of the number of blocks
         self.blnum = self.fsize / conf.blsize
         if self.fsize % conf.blsize != 0:
             self.blnum += 1
-        self.bldata = tuple([MogamiBlock() for i in range(self.blnum + 1)])
+
+        # initialization of read buffer
+        self.r_data = tuple([MogamiBlock() for i in range(self.blnum + 1)])
         self.r_buflock = threading.Lock()
-        MogamiLog.debug("create bldata 0-%d block" % (len(self.bldata)-1))
+        MogamiLog.debug("create r_data 0-%d block" % (len(self.r_data)-1))
 
         # initialization of write buffer
-        self.w_buflock = threading.Lock()
         self.w_list = []
         self.w_data = cStringIO.StringIO()
+        self.w_buflock = threading.Lock()
         self.w_len = 0
         # for buffer of dirty data
         self.dirty_dict = {}
         
     def create_connections(self, ):
-        """
+        """Create connections to data server which has file contents.
+
+        In this function, send request for open to data server.
+        (and calculate RTT)
         """
         # create a connection for data transfer
         try:
@@ -117,12 +134,14 @@ class MogamiRemoteFile(MogamiFile):
         try:
             self.p_channel = Channel.MogamiChanneltoData(self.dest)
         except Exception, e:
+            print self.dest
             return e.errno
 
         # send a request to data server for open
         start_t = time.time()
+        print self.mode
         (ans, self.datafd, open_t) = self.d_channel.open_req(
-            self.data_path, self.flag, self.mode)
+            self.data_path, self.flag, *self.mode)
         end_t = time.time()
         if ans != 0:  # failed...with errno
             self.finalize()
@@ -130,10 +149,13 @@ class MogamiRemoteFile(MogamiFile):
 
         # on success
         self.rtt = end_t - start_t - open_t
+        # must be 0
         return ans
 
     def finalize(self, ):
-        pass
+        self.r_data = None
+        self.d_channel.finalize()
+        self.p_channel.finalize()
 
     def read(self, length, offset):
         requestl = self.cal_bl(offset, length)
@@ -147,34 +169,31 @@ class MogamiRemoteFile(MogamiFile):
             buf = ""     # buffer for block[reqbl]
             last_readbl = reqbl
 
-            if self.bldata[reqbl].state == 2:
-                buf = self.bldata[reqbl].buf
-            elif self.bldata[reqbl].state == 1:
+            if self.r_data[reqbl].state == 2:
+                buf = self.r_data[reqbl].buf
+            elif self.r_data[reqbl].state == 1:
                 MogamiLog.debug("Waiting recv data %d block" % reqbl)
-                while self.bldata[reqbl].state == 1:
+                while self.r_data[reqbl].state == 1:
                     time.sleep(0.01)
-                buf = self.bldata[reqbl].buf
+                buf = self.r_data[reqbl].buf
             else:
-                ret = self.request_block(reqbl)
-                if ret != 0:
-                    MogamiLog.error("read error! (%d)" % ret)
-                    return ret
-                while self.bldata[reqbl].state == 1:
+                self.request_block(reqbl)
+                while self.r_data[reqbl].state == 1:
                     time.sleep(0.01)
                 with self.r_buflock:
-                    buf = self.bldata[reqbl].buf
+                    buf = self.r_data[reqbl].buf
 
             # check dirty data (and may replace data)
             with self.w_buflock:
                 if reqbl in self.dirty_dict:
                     dirty_data_list = self.dirty_dict[reqbl]
                     for dirty_data in dirty_data_list:
-                        # remember the seek pointer
-                        seek_point = self.writedata.tell()
-                        self.writedata.seek(dirty_data[2])
-                        dirty_str = self.writedata.read(
+                        # remember the seek pointer of write buffer
+                        seek_point = self.w_data.tell()
+                        self.w_data.seek(dirty_data[2])
+                        dirty_str = self.w_data.read(
                             dirty_data[1] - dirty_data[0])
-                        self.writedata.seek(seek_point)
+                        self.w_data.seek(seek_point)
                         tmp_buf = buf[dirty_data[1]:]
                         buf = buf[0:dirty_data[0]] + dirty_str + tmp_buf
 
@@ -183,49 +202,79 @@ class MogamiRemoteFile(MogamiFile):
             if len(buf) < conf.blsize:
                 break    # end of file
 
+        return ret_str.getvalue()
+
     def write(self, buf, offset):
-        
-        pass
+        # recalculation of the number of blocks
+        prev_blnum = self.blnum
+        self.blnum = self.fsize / conf.blsize
+        if self.fsize % conf.blsize != 0:
+            self.blnum += 1
+        if prev_blnum < self.blnum:
+            self.r_data += tuple([MogamiBlock() for i in
+                                  range(self.blnum - prev_blnum)])
+
+        tmp = (offset, len(buf))
+        prev_writelen = self.w_len
+        with self.w_buflock:
+            self.w_list.append(tmp)
+            self.w_data.write(buf)
+            self.w_len += len(buf)
+
+        reqs = self.cal_bl(offset, len(buf))
+        dirty_write = 0
+        for req in reqs:
+            if req[0] in self.dirty_dict:
+                self.dirty_dict[req[0]].append((req[1], req[2],
+                                                prev_writelen))
+            else:
+                self.dirty_dict[req[0]] = [(req[1], req[2],
+                                            prev_writelen), ]
+        if self.w_len > conf.writelen_max:
+            self.flush()
+        return len(buf)
 
     def flush(self, ):
-        pass
+        if self.w_len == 0:
+            return 0
+        with self.w_buflock:
+            send_data = self.w_data.getvalue()
 
-    def fsync(self, ):
+            MogamiLog.debug("flush: fd=%d, listlen=%d, datalen=%d" %
+                            (self.datafd, len(self.w_list), len(send_data)))
+            ans = self.d_channel.flush_req(self.datafd, self.w_list, send_data)
+            self.w_len = 0
+            self.w_list = []
+            self.w_data = cStringIO.StringIO()
+            self.dirty_dict = {}
+        return ans
+
+    def fsync(self, isfsyncfile):
         if self.w_len == 0:
             pass
         else:
             self.flush()
 
-    def release(self, ):
-        if self.w_len == 0:
-            pass
-        else:
+    def release(self, flags):
+        if self.w_len != 0:
             self.flush()
-        channel.send_header(cPickle.dumps(senddata), self.dsock)
-        ans = channel.recv_header(self.dsock)
-        MogamiLog.debug('** release')
-        
-        self.bldata = None
-        self.timedic = None
-        self.channel.finalize()
-        self.p_chanel.finalize()
+        (ans, fsize) = self.d_channel.release_req(self.datafd)
+        self.finalize()
+        return fsize
 
     def request_block(self, blnum):
         """send request of block data.
         
         @param blnum the number of block to require
         """
-
-        senddata = ['read', self.datafd, blnum]
         MogamiLog.debug("** read %d block" % (blnum))
-        self.r_buflock.acquire()
-        self.bldata[blnum].state = 1
-        self.r_buflock.release()
-
         MogamiLog.debug("request to data server %d block" % (blnum))
-        with self.plock:
-            channel.send_header(cPickle.dumps(senddata), self.psock)
-        return 0
+        self.p_channel.read_req(self.datafd, blnum)
+
+        # change status of the block (to requiring)
+        with self.r_buflock:
+            self.r_data[blnum].state = 1
+
 
     def request_prefetch(self, blnum_list):
         """send request of prefetch.
@@ -235,11 +284,11 @@ class MogamiRemoteFile(MogamiFile):
         MogamiLog.debug("** prefetch ** required blocks = %s" % 
                         (str(blnum_list)))
         # send request to data server
-        self.d_channel.prefetch_req(self.datafd, blnum_list)
+        self.p_channel.prefetch_req(self.datafd, blnum_list)
 
         with self.r_buflock:
             for blnum in blnum_list:
-                self.bldata[blnum].state = 1
+                self.r_data[blnum].state = 1
 
     def cal_bl(self, offset, size):
         """This function is used for calculation of request block number.
@@ -267,8 +316,8 @@ class MogamiRemoteFile(MogamiFile):
 class MogamiLocalFile(MogamiFile):
     """Class for a file located at local storage
     """
-    def __init__(self, path, size, data_path, flag, *mode):
-        MogamiFile.__init__(self, path, size)
+    def __init__(self, fsize, data_path, flag, *mode):
+        MogamiFile.__init__(self, fsize)
         self.remote = False
         
         # make information for open
