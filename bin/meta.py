@@ -358,7 +358,7 @@ class MogamiMetaHandler(System.MogamiDaemons):
         self.c_channel.rename_answer(ans)
 
     def chmod(self, path, mode):
-        MogamiLog.debug("path = %s w/ mode %o" % (path, oct(mode)))
+        MogamiLog.debug("path = %s w/ mode %s" % (path, oct(mode)))
         try:
             os.chmod(path, mode)
             ans = 0
