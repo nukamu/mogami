@@ -62,6 +62,21 @@ REQ_SCHEDULE = 32
 TYPE_TCP = 0
 TYPE_UNIX = 1
 
+class MogamiChannelRepository(object):
+    def __init__(self, ):
+        self.channel_dict = {}
+        self.lock = threading.Lock()
+        
+    def get_channel(self, dest):
+        with self.lock:
+            if dest not in self.channel_dict:
+                return None
+            else:
+                return self.channel_dict[dest]
+
+    def set_channel(self, dest, d_channel, p_channel):
+        with self.lock:
+            self.channel_dict[dest] = (d_channel, p_channel)
 
 class MogamiChannel(object):
     """the class for communication with others using TCP
@@ -72,20 +87,12 @@ class MogamiChannel(object):
 
         @param *mode socket type used in this class (optional)
         """
-        # make a socket to communicate with others
-        if len(mode) == 0:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        elif mode[0] == TYPE_TCP:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        elif mode[0] == TYPE_UNIX:
-            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            self.connect = self.unix_connect
+        if len(mode) > 0:
+            if mode[0] == TYPE_UNIX:
+                self.connect = self.unix_connect
 
         # lock for the socket
         self.lock = threading.Lock()
-
         self.peername = None
 
     def unix_connect(self, path):
@@ -94,6 +101,8 @@ class MogamiChannel(object):
 
         @param path path of named pipe to connect
         """
+        # make a socket to communicate with others
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.connect(path)
 
     def connect(self, dist, port):
@@ -102,6 +111,9 @@ class MogamiChannel(object):
         @param dist distination IP or hostname to connect
         @param port port number to connect
         """
+        # make a socket to communicate with others
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.sock.connect((dist, port))
 
     def set_socket(self, sock):
@@ -370,6 +382,10 @@ class MogamiChanneltoData(MogamiChannel):
             ans = self.recv_msg()
         # (0 or errno, fsize)
         return ans
+
+    def close_req(self, ):
+        with self.lock:
+            self.send_msg((REQ_CLOSE, ))
 
 class MogamiChannelforServer(MogamiChannel):
 

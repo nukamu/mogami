@@ -36,6 +36,7 @@ from libs.System import MogamiLog
 m_channel = Channel.MogamiChanneltoMeta()
 daemons = []
 file_size_dict = {}
+channels = Channel.MogamiChannelRepository()
 
 
 class MogamitoTellAccessPattern(System.MogamiDaemons):
@@ -239,7 +240,7 @@ class MogamiFS(Fuse):
             else:
                 self.mogami_file = FileManager.MogamiRemoteFile(
                     self.fsize, dest, data_path, flag, *mode)
-                ans = self.mogami_file.create_connections()
+                ans = self.mogami_file.create_connections(channels)
                 if ans != 0:
                     MogamiLog.error("open error !!")
                     e = IOError()

@@ -63,8 +63,9 @@ class MogamiDataHandler(System.MogamiDaemons):
                 self.flush(req[1], req[2], req[3])
 
             elif req[0] == Channel.REQ_RELEASE:
-                MogamiLog.debug('** release')
+                MogamiLog.debug('** release **')
                 self.release(req[1])
+                self.c_channel.finalize()
                 break
 
             elif req[0] == Channel.REQ_TRUNCATE:
@@ -80,11 +81,12 @@ class MogamiDataHandler(System.MogamiDaemons):
                 break
 
             elif req[0] == Channel.REQ_FILEDEL:
-                MogamiLog.debug("** filedel")
+                MogamiLog.debug("** filedel **")
                 self.filedel(req[1])
 
             else:
                 MogamiLog.debug('** this is unexpected header. break!')
+                self.c_channel.finalize()
                 break
 
     def truncate(self, path, length):
@@ -260,6 +262,7 @@ class MogamiData(object):
             # connected from client
             (csock, address) = self.lsock.accept()
             MogamiLog.debug("accept connnect from " + str(address[0]))
+
 
             client_channel = Channel.MogamiChannelforData()
             client_channel.set_socket(csock)

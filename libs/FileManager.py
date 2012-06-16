@@ -119,27 +119,26 @@ class MogamiRemoteFile(MogamiFile):
         # for buffer of dirty data
         self.dirty_dict = {}
         
-    def create_connections(self, ):
+    def create_connections(self, channel_repository):
         """Create connections to data server which has file contents.
 
         In this function, send request for open to data server.
         (and calculate RTT)
         """
+        channels = channel_repository.get_channel(self.dest)
+        #if channels == None or len(channels) > 2:
         # create a connection for data transfer
-        try:
-            self.d_channel = Channel.MogamiChanneltoData(self.dest)
-        except Exception, e:
-            return e.errno
+        self.d_channel = Channel.MogamiChanneltoData(self.dest)
         # create a connection for prefetching
-        try:
-            self.p_channel = Channel.MogamiChanneltoData(self.dest)
-        except Exception, e:
-            print self.dest
-            return e.errno
+        self.p_channel = Channel.MogamiChanneltoData(self.dest)
+        #channel_repository.set_channel(self.dest, self.d_channel, self.p_channel)
+        #else:
+            # set channels
+        #    self.d_channel = channels[0]
+        #    self.p_channel = channels[1]
 
         # send a request to data server for open
         start_t = time.time()
-        print self.mode
         (ans, self.datafd, open_t) = self.d_channel.open_req(
             self.data_path, self.flag, *self.mode)
         end_t = time.time()
@@ -155,6 +154,7 @@ class MogamiRemoteFile(MogamiFile):
     def finalize(self, ):
         self.r_data = None
         self.d_channel.finalize()
+        self.p_channel.close_req()
         self.p_channel.finalize()
 
     def read(self, length, offset):
