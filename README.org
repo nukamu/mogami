@@ -47,7 +47,7 @@ $ mogami --server --meta_addr METADATA_SERVER_HOSTNAME /path/to/data/dir
 ** Clients
    #+BEGIN_SRC sh
 $ mogami --client --meta_addr METADATA_SERVER_HOSTNAME /path/to/mount/dir [fuse options]
-   #+END_SRV
+   #+END_SRC
    This starts a Mogami client daemon and mounts /path/to/mount/dir.
 
 * Stopping Mogami
