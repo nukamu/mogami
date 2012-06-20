@@ -3,7 +3,7 @@
 
   Author: MIKI HORIUCHI <mikity@eidos.ic.i.u-tokyo.ac.jp>
 
-  Created Date: 6/14/2012
+  Creation Date: 6/14/2012
 
   Last Update: 6/14/2012
 
@@ -11,8 +11,8 @@
 ** Requirements
    - FUSE
    - python-fuse
-   They might be installed using pachaging systems of your distributions. 
-   The example with Debian are as follows:
+   They might be installed using a packaging system of your distribution.
+   The example with Debian follows:
    #+BEGIN_SRC sh
 # apt-get install fuse
 # apt-get install python-fuse
@@ -26,35 +26,36 @@
    Add bin/ of this repository to PATH environmental variable.
 
 * Usage
-  Mogami works with three components:
+  Mogami consists of three components:
   - Metadata server
   - Data servers
   - Clients
   *Data servers and clients must be run after a metadata server has been activated.*
 
-** Metadata Server
+** Running Mogami
+*** Metadata Server
    #+BEGIN_SRC sh
 $ mogami --meta /path/to/metadata/dir
    #+END_SRC
    This starts the metadata server daemon.
 
-** Data Servers
+*** Data Servers
    #+BEGIN_SRC sh
 $ mogami --server --meta_addr METADATA_SERVER_HOSTNAME /path/to/data/dir
    #+END_SRC
    This starts a data server daemon.
 
-** Clients
+*** Clients
    #+BEGIN_SRC sh
 $ mogami --client --meta_addr METADATA_SERVER_HOSTNAME /path/to/mount/dir [fuse options]
-   #+END_SRV
+   #+END_SRC
    This starts a Mogami client daemon and mounts /path/to/mount/dir.
 
-* Stopping Mogami
+** Stopping Mogami
   To unmount /path/to/mount/dir:
   #+BEGIN_SRC sh
 $ fusermount -u /path/to/mount/dir
   #+END_SRC
 
-  Umount can be failed with "device is busy" kinds of errors if any other process accesses /path/to/mount/dir.
-  Kill the metadata server daemon and data server daemons by sending SIGINT.
+  Umount can fail with errors like "device is busy" if another process accesses /path/to/mount/dir.
+  In case of those, kill the metadata server daemon and the data server daemons by sending SIGINT.
