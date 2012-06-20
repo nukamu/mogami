@@ -548,14 +548,13 @@ class MogamiMetaHandler(Daemons.MogamiDaemons):
         dist_dict = {}
 
         for path in path_list:
-            print os.path.join(self.rootpath, path)
             try:
                 f = open(os.path.join(self.rootpath, path), 'r')
                 buf = f.read()
                 l = buf.rsplit(',')
                 dist_dict[path] = l[0]
             except Exception:
-                pass
+                dist_dict[path] = None
         print dist_dict
         senddata = dist_dict
         channel.send_header(cPickle.dumps(senddata), self.sock)
