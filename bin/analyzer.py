@@ -97,8 +97,12 @@ class MogamiWorkflowIOAnalyzer(object):
         
     def analize(self, ):
         self.make_sets()
+        
 
     def make_sets(self, ):
+        """
+        This function should be called in self.analize().
+        """
         aplog_list = self._parse_data_from_db()
                 
         for ap in aplog_list:
@@ -259,19 +263,19 @@ class MogamiWorkflowIOAnalyzer(object):
 
 if __name__ == "__main__":
     import doctest
-    if len(sys.argv) != 4:
-        sys.exit("Usage: %s [db_path] [output_file] [loop]" % (sys.argv[0]))
+    doctest.testmod()
+    if len(sys.argv) != 3:
+        sys.exit("Usage: %s [db_path] [output_file]" % (sys.argv[0]))
     workflow_analyzer = MogamiWorkflowIOAnalyzer(sys.argv[1])
     workflow_analyzer.analize()
  
-    f = open("montage_data0.csv", 'r')
-    for i in range(int(sys.argv[3])):
-        tmp = f.readline()
-    f.close()
-    next_cmd = eval(tmp.split("|")[0])
-    print next_cmd
+    #f = open("montage_data0.csv", 'r')
+    #for i in range(int(sys.argv[3])):
+    #    tmp = f.readline()
+    #f.close()
+    #next_cmd = eval(tmp.split("|")[0])
+    #print next_cmd
 
-    print file_from_feature(next_cmd, workflow_analyzer.command_dict[next_cmd[0]][0][0])
-    print file_from_feature(next_cmd, workflow_analyzer.command_dict[next_cmd[0]][1][0])
-    #workflow_analyzer.output(sys.argv[2])
-    doctest.testmod()
+    #print file_from_feature(next_cmd, workflow_analyzer.command_dict[next_cmd[0]][0][0])
+    #print file_from_feature(next_cmd, workflow_analyzer.command_dict[next_cmd[0]][1][0])
+    workflow_analyzer.output(sys.argv[2])
