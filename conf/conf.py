@@ -22,6 +22,6 @@ write_local=True
 
 multithreaded=True
 
-fs_loglevel=logging.DEBUG
-meta_loglevel=logging.DEBUG
-data_loglevel=logging.DEBUG
+fs_loglevel=logging.INFO
+meta_loglevel=logging.INFO
+data_loglevel=logging.INFO

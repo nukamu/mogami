@@ -126,11 +126,9 @@ class MogamiRemoteFile(MogamiFile):
         (and calculate RTT)
         """
         channels = channel_repository.get_channel(self.dest)
-        #if channels == None or len(channels) > 2:
-        # create a connection for data transfer
         self.d_channel = Channel.MogamiChanneltoData(self.dest)
         # create a connection for prefetching
-        self.p_channel = Channel.MogamiChanneltoData(self.dest)
+        #self.p_channel = Channel.MogamiChanneltoData(self.dest)
         #channel_repository.set_channel(self.dest, self.d_channel, self.p_channel)
         #else:
             # set channels
@@ -154,8 +152,8 @@ class MogamiRemoteFile(MogamiFile):
     def finalize(self, ):
         self.r_data = None
         self.d_channel.finalize()
-        self.p_channel.close_req()
-        self.p_channel.finalize()
+        #self.p_channel.close_req()
+        #self.p_channel.finalize()
 
     def read(self, length, offset):
         requestl = self.cal_bl(offset, length)
@@ -178,8 +176,8 @@ class MogamiRemoteFile(MogamiFile):
                 buf = self.r_data[reqbl].buf
             else:
                 self.request_block(reqbl)
-                while self.r_data[reqbl].state == 1:
-                    time.sleep(0.01)
+                #while self.r_data[reqbl].state == 1:
+                #    time.sleep(0.01)
                 with self.r_buflock:
                     buf = self.r_data[reqbl].buf
 
@@ -269,12 +267,19 @@ class MogamiRemoteFile(MogamiFile):
         """
         MogamiLog.debug("** read %d block" % (blnum))
         MogamiLog.debug("request to data server %d block" % (blnum))
-        self.p_channel.read_req(self.datafd, blnum)
 
         # change status of the block (to requiring)
         with self.r_buflock:
             self.r_data[blnum].state = 1
+       
+        bldata = self.d_channel.read_req(self.datafd, blnum)
 
+        if bldata == None:
+            self.r_data = None       
+
+        with self.r_buflock:
+            self.r_data[blnum].state = 2
+            self.r_data[blnum].buf = bldata
 
     def request_prefetch(self, blnum_list):
         """send request of prefetch.

@@ -98,12 +98,10 @@ class MogamiFS(Fuse):
             st.load(ret_st)
             if fsize >= 0:
                 st.chsize(fsize)
-            # if file_size_dict has cache of file size, replace it
-            if path in file_size_dict:
-                MogamiLog.debug("path = %s, change size from %d to %d" %
-                                (path, fsize, file_size_dict[path]))
-                st.chsize(file_size_dict[path])
-            return st
+        # if file_size_dict has cache of file size, replace it
+        if path in file_size_dict:
+            st.chsize(file_size_dict[path])
+        return st
 
     def readdir(self, path, offset):
         MogamiLog.debug("** readdir ** path = %s, offset = %s" %
@@ -264,10 +262,10 @@ class MogamiFS(Fuse):
                 # with any error, pass this part of process
                 pass"""
 
-            if self.mogami_file.remote == True:
-                self.recvth = System.MogamiPrefetchThread(self.mogami_file)
-                self.recvth.start()
-                daemons.append(self.recvth)
+            #if self.mogami_file.remote == True:
+            #    self.recvth = System.MogamiPrefetchThread(self.mogami_file)
+            #    self.recvth.start()
+            #    daemons.append(self.recvth)
 
             #self.access_pattern = Tips.MogamiFileAccessPattern()
 

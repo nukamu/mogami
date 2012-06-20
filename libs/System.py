@@ -108,10 +108,10 @@ class MogamiPrefetchThread(MogamiDaemons):
 
                     MogamiLog.debug("prefetch recv %d byte bnum %d" %
                                     (len(buf), blnum))
-                if self.mogami_file.r_data != None:
-                    with self.mogami_file.r_buflock:
-                        self.mogami_file.r_data[blnum].state = 2
-                        self.mogami_file.r_data[blnum].buf = buf
+            if self.mogami_file.r_data != None:
+                with self.mogami_file.r_buflock:
+                    self.mogami_file.r_data[blnum].state = 2
+                    self.mogami_file.r_data[blnum].buf = buf
 
 
 class Singleton(type):

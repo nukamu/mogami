@@ -52,7 +52,7 @@ def main():
         elif options.f == True:
             os.system("python fs.py %s %s -f" % (options.meta_addr, mount_dir))
         else:
-            os.system("python fs.py %s %s" % (options.meta_addr, mount_dir))
+            os.system("python fs.py %s %s -o big_writes -o large_read" % (options.meta_addr, mount_dir))
 
     elif options.mode == 3:
         import apd

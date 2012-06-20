@@ -138,7 +138,7 @@ class MogamiChannel(object):
             self.sock.sendall(data)
         except Exception, e:
             MogamiLog.debug("** Error in sending data **")
-            return e.errno
+            return None
         return len(data)
 
     def recvall(self, length):
@@ -172,6 +172,7 @@ class MogamiChannel(object):
         while conf.bufsize - 3 < len(buf):
             ret = self.sendall(buf[:conf.bufsize - 3] + "---")
             if ret == None:
+                MogamiLog.error("send_msg error")
                 break
             buf = buf[conf.bufsize - 3:]
         buf = buf + "-" * (conf.bufsize - len(buf) - 3) + "end"
@@ -181,12 +182,12 @@ class MogamiChannel(object):
         """
         """
         res_buf = cStringIO.StringIO()
-        buf = self.recvall(conf.bufsize)
-        if len(buf) != conf.bufsize:
-            return None
-        res_buf.write(buf[:-3])
+        buf = ""
         while buf[-3:] != "end":
             buf = self.recvall(conf.bufsize)
+            if len(buf) != conf.bufsize:
+                MogamiLog.error("recv_msg error")
+                return None
             res_buf.write(buf[:-3])
         ret = cPickle.loads(res_buf.getvalue())
         return ret
@@ -352,6 +353,21 @@ class MogamiChanneltoData(MogamiChannel):
     def read_req(self, datafd, blnum):
         with self.lock:
             self.send_msg((REQ_READ, datafd, blnum))
+            header = self.recv_msg()
+            if header == None:
+                return None
+
+            errno = header[0]
+            blnum = header[1]
+            size = header[2]
+
+            if size == 0:
+                return ""
+
+            buf = self.recvall(size)
+            
+        return buf
+
 
     def prefetch_req(self, datafd, blnum_list):
         with self.lock:
