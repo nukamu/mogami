@@ -29,6 +29,7 @@ from libs import Channel
 from libs import DBMng
 from libs import System
 from libs import Tips
+from libs import Daemons
 from libs import FileManager
 from libs.System import MogamiLog
 
@@ -39,9 +40,9 @@ file_size_dict = {}
 channels = Channel.MogamiChannelRepository()
 
 
-class MogamitoTellAccessPattern(System.MogamiDaemons):
+class MogamitoTellAccessPattern(Daemons.MogamiDaemons):
     def __init__(self, pipepath, queue):
-        System.MogamiDaemons.__init__(self)
+        Daemons.MogamiDaemons.__init__(self)
         self.pipepath = pipepath
         self.queue = queue
 
@@ -67,7 +68,7 @@ class MogamiFS(Fuse):
         MogamiLog.debug("Init complete!!")
         
         # create a thread for collecting dead threads
-        collector_thread = System.MogamiThreadCollector(daemons)
+        collector_thread = Daemons.MogamiThreadCollector(daemons)
         collector_thread.start()
 
         # create a thread for telling access pattern logs
@@ -263,7 +264,7 @@ class MogamiFS(Fuse):
                 pass"""
 
             #if self.mogami_file.remote == True:
-            #    self.recvth = System.MogamiPrefetchThread(self.mogami_file)
+            #    self.recvth = Daemons.MogamiPrefetchThread(self.mogami_file)
             #    self.recvth.start()
             #    daemons.append(self.recvth)
 

@@ -403,6 +403,12 @@ class MogamiChanneltoData(MogamiChannel):
         with self.lock:
             self.send_msg((REQ_CLOSE, ))
 
+    def delfile_req(self, files):
+        with self.lock:
+            self.send_msg((REQ_FILEDEL, files))
+            ans = self.recv_msg()
+        return ans
+
 class MogamiChannelforServer(MogamiChannel):
 
     def recv_request(self, ):

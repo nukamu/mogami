@@ -23,6 +23,7 @@ sys.path.append(os.pardir)
 from libs import Channel
 from libs import DBMng
 from libs import System
+from libs import Daemons
 from conf import conf
 from libs.System import MogamiLog
 
@@ -113,12 +114,12 @@ class MogamiSystemInfo(object):
         self.delfile_q.put((dest, data_path))
 
 
-class MogamiMetaHandler(System.MogamiDaemons):
+class MogamiMetaHandler(Daemons.MogamiDaemons):
     """This is the class for thread created for each client.
     This handler is run as multithread.
     """
     def __init__(self, client_channel, sysinfo):
-        System.MogamiDaemons.__init__(self)
+        Daemons.MogamiDaemons.__init__(self)
         self.sysinfo = sysinfo
         self.c_channel = client_channel
         self.rootpath = sysinfo.meta_rootpath
@@ -560,36 +561,29 @@ class MogamiMetaHandler(System.MogamiDaemons):
         channel.send_header(cPickle.dumps(senddata), self.sock)
 
 
-class MogamiDaemononMeta(System.MogamiDaemons):
+class MogamiDaemononMeta(Daemons.MogamiDaemons):
     """Send the data servers the request to delete files.
 
     @param files file list to delete
     """
     def __init__(self, sysinfo):
-        System.MogamiDaemons.__init__(self)
+        Daemons.MogamiDaemons.__init__(self)
         self.delfile_q = sysinfo.delfile_q
-
+        
     def run(self, ):
         while True:
-            #del_key_list = []
-            #for IP, files in delfile_dict.iteritems():
-                #self.send_delete_request(IP, files)
-                #del_key_list.append(IP)
-            #or del_key in del_key_list:
-                #del delfile_dict[del_key]
-            time.sleep(3)
+            count = 0
+            try:
+                (target_ip, target_file) = self.delfile_q.get(timeout=5)
+                self.send_delete_request(target_ip, [target_file, ])
+            except Queue.Empty:
+                pass
 
     def send_delete_request(self, ip, files):
-        senddata = (Channel.REQ_FILEDEL, files)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((IP, conf.dataport))
-
-        channel.send_header(cPickle.dumps(senddata), sock)
-        ans = channel.recv_header(sock)
-        senddata = ['close']
-        channel.send_header(cPickle.dumps(senddata), sock)
-        sock.close()
-
+        c_channel = Channel.MogamiChanneltoData(ip)
+        ans = c_channel.delfile_req(files)
+        c_channel.close_req()
+        c_channel.finalize()
 
 class MogamiMeta(object):
     """This is the class of mogami's metadata server
@@ -620,7 +614,7 @@ class MogamiMeta(object):
         self.lsock.listen(10)
         MogamiLog.debug("Listening at the port " + str(conf.metaport))
         daemons = []
-        thread_collector = System.MogamiThreadCollector(daemons)
+        thread_collector = Daemons.MogamiThreadCollector(daemons)
         thread_collector.start()
         threads_count = 0
 

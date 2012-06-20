@@ -21,16 +21,17 @@ sys.path.append(os.pardir)
 
 from libs import Channel
 from libs import System
+from libs import Daemons
 from libs.System import MogamiLog
 from conf import conf
 
 
-class MogamiDataHandler(System.MogamiDaemons):
+class MogamiDataHandler(Daemons.MogamiDaemons):
     """This is the class for thread created for each client.
     This handler is run as multithread.
     """
     def __init__(self, c_channel, rootpath):
-        System.MogamiDaemons.__init__(self)
+        Daemons.MogamiDaemons.__init__(self)
         self.c_channel = c_channel
         self.rootpath = rootpath
 
@@ -254,7 +255,7 @@ class MogamiData(object):
 
         # create a thread to collect dead daemon threads
         daemons = []
-        collector_thread = System.MogamiThreadCollector(daemons)
+        collector_thread = Daemons.MogamiThreadCollector(daemons)
         collector_thread.start()
         threads_count = 0
 
