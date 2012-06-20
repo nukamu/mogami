@@ -28,7 +28,8 @@ class MogamiStat(fuse.Stat):
     def __init__(self, ):
         for attr in self.mogami_attrs:
             try:
-                setattr(self, "_" + attr, 0)
+                #setattr(self, "_" + attr, 0)
+                setattr(self, attr, 0)
             except AttributeError, e:
                 print e
 
@@ -38,19 +39,19 @@ class MogamiStat(fuse.Stat):
         return "<MogamiStat %s>" % (s,)
 
     def load(self, st):
-        for attr in self.mogami_attrs:
+        for attr in self.attrs:
             try:
-                setattr(self, attr, getattr(st, "_" + attr))
+                #setattr(self, attr, getattr(st, "_" + attr))
+                setattr(self, attr, getattr(st, attr))
             except AttributeError, e:
                 print e
-                pass
 
-    def __getattr__(self, attrname):
-        val = getattr(self, "_" + attrname)
-        return val
+    #def __getattr__(self, attrname):
+    #    val = getattr(self, "_" + attrname)
+    #    return val
 
-    def __setattr__(self, attrname, newvalue):
-        setattr(self, "_" + attrname, newvalue)
+    #def __setattr__(self, attrname, newvalue):
+    #    setattr(self, "_" + attrname, newvalue)
 
     # TODO: Deprecated
     def chsize(self, size):
