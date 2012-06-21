@@ -221,7 +221,7 @@ class MogamiMetaHandler(Daemons.MogamiDaemons):
                 self.register_ramfiles(req[1])
 
             elif req[0] == Channel.REQ_FILEASK:
-                print '** fileask'
+                #print '** fileask'
                 self.file_ask(req[1])
 
             else:
@@ -376,6 +376,26 @@ class MogamiMetaHandler(Daemons.MogamiDaemons):
             ans = e.errno
         self.c_channel.chown_answer(ans)
 
+    def symlink(self, frompath, topath):
+        MogamiLog.debug("frompath = %s, topath = %s" % (frompath, topath))
+        try:
+            os.symlink(frompath, topath)
+            ans = 0
+        except os.error, e:
+            ans = e.errno
+        self.c_channel.symlink_answer(ans)
+
+    def readlink(self, path):
+        print "path = " + path
+        MogamiLog.debug("path = %s" % path)
+        try:
+            result = os.readlink(path).replace(self.rootpath, "")
+            ans = 0
+        except os.error, e:
+            ans = e.errno
+            result = None
+        self.c_channel.readlink_answer(ans, result)
+
     def truncate(self, path, length):
         """truncate handler.
 
@@ -407,6 +427,7 @@ class MogamiMetaHandler(Daemons.MogamiDaemons):
         self.c_channel.truncate_answer(ans, dest, data_path)
 
     def utime(self, path, times):
+        print "** utime **"
         MogamiLog.debug("path = %s, times = %s" % (path, str(times)))
         try:
             os.utime(path, times)
@@ -545,19 +566,18 @@ class MogamiMetaHandler(Daemons.MogamiDaemons):
         channel.send_header(cPickle.dumps(senddata), self.sock)
 
     def file_ask(self, path_list):
-        dist_dict = {}
+        dest_dict = {}
 
         for path in path_list:
             try:
-                f = open(os.path.join(self.rootpath, path), 'r')
+                f = open(self.rootpath + path, 'r')
                 buf = f.read()
                 l = buf.rsplit(',')
-                dist_dict[path] = l[0]
+                dest_dict[path] = l[0]
             except Exception:
-                dist_dict[path] = None
-        print dist_dict
-        senddata = dist_dict
-        channel.send_header(cPickle.dumps(senddata), self.sock)
+                dest_dict[path] = None
+        #print dest_dict
+        self.c_channel.fileask_answer(dest_dict)
 
 
 class MogamiDaemononMeta(Daemons.MogamiDaemons):

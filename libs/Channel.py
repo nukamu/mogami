@@ -298,6 +298,20 @@ class MogamiChanneltoMeta(MogamiChannel):
         # 0 or errno
         return ans
 
+    def symlink_req(self, frompath, topath):
+        with self.lock:
+            self.send_msg((REQ_SYMLINK, frompath, topath))
+            ans = self.recv_msg()
+        # 0 or errno
+        return ans
+
+    def readlink_req(self, path):
+        with self.lock:
+            self.send_msg((REQ_READLINK, path))
+            ans = self.recv_msg()
+        # (0 or errno, result)
+        return ans
+
     def truncate_req(self, path, length):
         with self.lock:
             self.send_msg((REQ_TRUNCATE, path, length))
@@ -453,6 +467,14 @@ class MogamiChannelforMeta(MogamiChannelforServer):
         with self.lock:
             self.send_msg(ans)
 
+    def symlink_answer(self, ans):
+        with self.lock:
+            self.send_msg(ans)
+
+    def readlink_answer(self, ans, result):
+        with self.lock:
+            self.send_msg((ans, result))
+
     def truncate_answer(self, ans, dest, data_path):
         with self.lock:
             self.send_msg((ans, dest, data_path))
@@ -469,6 +491,9 @@ class MogamiChannelforMeta(MogamiChannelforServer):
         with self.lock:
             self.send_msg(ans)
 
+    def fileask_answer(self, dest_dict):
+        with self.lock:
+            self.send_msg(dest_dict)
 
 class MogamiChannelforData(MogamiChannelforServer):
     def truncate_answer(self, ans):

@@ -181,8 +181,20 @@ class MogamiFS(Fuse):
     def chown(self, path, uid, gid):
         MogamiLog.debug('** chown ** ' + path + str(uid) + str(gid))
         ans = m_channel.chown_req(path, uid, gid)
+        return -ans
+
+    def symlink(self, frompath, topath):
+        MogamiLog.debug("** symlink ** frompath = %s, topath = %s" %
+                        (frompath, topath))
+        ans = m_channel.symlink_req(frompath, topath)
+        return -ans
+
+    def readlink(self, path):
+        MogamiLog.debug("** readlink ** path = %s" % (path))
+        (ans, result) = m_channel.readlink_req(path)
         if ans != 0:
             return -ans
+        return result
 
     def truncate(self, path, length):
         MogamiLog.debug('** truncate ** path = %s, length = %d' %
