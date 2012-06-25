@@ -221,7 +221,7 @@ class MogamiMetaHandler(Daemons.MogamiDaemons):
                 self.register_ramfiles(req[1])
 
             elif req[0] == Channel.REQ_FILEASK:
-                #print '** fileask'
+                MogamiLog.debug("** fileask **")
                 self.file_ask(req[1])
 
             else:
@@ -567,7 +567,6 @@ class MogamiMetaHandler(Daemons.MogamiDaemons):
 
     def file_ask(self, path_list):
         dest_dict = {}
-
         for path in path_list:
             try:
                 f = open(self.rootpath + path, 'r')
@@ -576,7 +575,6 @@ class MogamiMetaHandler(Daemons.MogamiDaemons):
                 dest_dict[path] = l[0]
             except Exception:
                 dest_dict[path] = None
-        #print dest_dict
         self.c_channel.fileask_answer(dest_dict)
 
 
