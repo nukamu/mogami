@@ -178,8 +178,7 @@ class MogamiMetaHandler(Daemons.MogamiDaemons):
                           self.rootpath + req[2])
 
             elif req[0] == Channel.REQ_SYMLINK:
-                self.symlink(self.rootpath + req[1],
-                             self.rootpath + req[2])
+                self.symlink(req[1], self.rootpath + req[2])
 
             elif req[0] == Channel.REQ_READLINK:
                 self.readlink(self.rootpath + req[1])
@@ -389,7 +388,7 @@ class MogamiMetaHandler(Daemons.MogamiDaemons):
         print "path = " + path
         MogamiLog.debug("path = %s" % path)
         try:
-            result = os.readlink(path).replace(self.rootpath, "")
+            result = os.readlink(path)
             ans = 0
         except os.error, e:
             ans = e.errno
