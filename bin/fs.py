@@ -10,16 +10,10 @@ fuse.fuse_python_api = (0, 2)
 # python standard modules
 import stat
 import errno
-import threading
 import os
 import os.path
+import Queue
 import sys
-import socket
-import cPickle
-import cStringIO
-import select
-import string
-import re
 import time
 sys.path.append(os.pardir)
 
@@ -38,17 +32,53 @@ m_channel = Channel.MogamiChanneltoMeta()
 daemons = []
 file_size_dict = {}
 channels = Channel.MogamiChannelRepository()
+file_access_queue = Queue.Queue()
 
 
 class MogamitoTellAccessPattern(Daemons.MogamiDaemons):
-    def __init__(self, pipepath, queue):
+    def __init__(self, pipepath):
         Daemons.MogamiDaemons.__init__(self)
         self.pipepath = pipepath
-        self.queue = queue
+        if os.access(self.pipepath, os.F_OK) == True:
+            os.remove(self.pipepath)
+        self.file_access_dict = {}  # {pid: file_accesses (list) }
+
+        self.channel = Channel.MogamiChanneltoTellAP(self.pipepath)
 
     def run(self, ):
+        """This thread should process data in file access queue
+        and answer questions about file access pattern from gxpd process.
+        """
         while True:
-            time.sleep(100)
+            self.parse_file_access_pattern()
+            self.answer_to_client()
+
+    def answer_to_client(self, ):
+        c_channel = self.channel.accept_with_timeout(1.0)
+        if c_channel == None:
+            return None
+        pid = c_channel.recv_msg()
+        if pid in self.file_access_dict:
+            c_channel.send_msg(self.file_access_dict[pid])
+        else:
+            c_channel.send_msg([])
+        c_channel.finalize()
+        
+    def parse_file_access_pattern(self, ):
+        try:
+            ap = file_access_queue.get(timeout=0.1)
+            # ap = (cmd, pid, path, hostname, time, created, read, write)
+            if len(ap) != 8:
+                print "** didn't match the format of file access pattern **"
+                return None
+            pid = int(ap[1])
+            if pid not in self.file_access_dict:
+                self.file_access_dict[pid] = []
+            print ap
+            self.file_access_dict[pid].append(ap)
+        except Queue.Empty:
+            pass
+
 
 class MogamiFS(Fuse):
     """Class for Mogami file system (client)
@@ -179,11 +209,22 @@ class MogamiFS(Fuse):
             return -ans
 
     def chown(self, path, uid, gid):
+        """chown handler.
+
+        @param path path to change owner of
+        @param uid user id of new owner
+        @param gid group id of new owner
+        """
         MogamiLog.debug('** chown ** ' + path + str(uid) + str(gid))
         ans = m_channel.chown_req(path, uid, gid)
         return -ans
 
     def symlink(self, frompath, topath):
+        """symlink handler.
+
+        @param frompath 
+        @param topath
+        """
         MogamiLog.debug("** symlink ** frompath = %s, topath = %s" %
                         (frompath, topath))
         ans = m_channel.symlink_req(frompath, topath)
@@ -219,7 +260,7 @@ class MogamiFS(Fuse):
         if ans != 0:
             return -ans
 
-    class MogamiFile(object):
+    class MogamiFile(Fuse):
         """This is the class of file management on Mogami.
         """
 
@@ -232,6 +273,8 @@ class MogamiFS(Fuse):
             """
             MogamiLog.debug("** open ** path = %s, flag = %s, mode = %s" %
                             (path, str(flag), str(mode)))
+            start_t = time.time()
+
             # parse argurments
             self.path = path
             self.flag = flag
@@ -265,22 +308,19 @@ class MogamiFS(Fuse):
             list = {gid: pid: uid}
             And then get the command from pid.
             """
-            """try:
+            try:
                 id_list = self.GetContext()
                 pid = id_list['pid']
                 f = open(os.path.join("/proc", str(pid), "cmdline"), 'r')
-                self.cmd_args = f.read().rsplit('\x00')[:-1]
-                print self.cmd_args
+                cmd_args = f.read().rsplit('\x00')[:-1]
             except Exception, e:
                 # with any error, pass this part of process
-                pass"""
-
-            #if self.mogami_file.remote == True:
-            #    self.recvth = Daemons.MogamiPrefetchThread(self.mogami_file)
-            #    self.recvth.start()
-            #    daemons.append(self.recvth)
-
-            #self.access_pattern = Tips.MogamiFileAccessPattern()
+                cmd_args = None
+                pid = -1
+            self.access_pattern = FileManager.MogamiAccessPattern(
+                path, cmd_args, pid)
+            end_t = time.time()
+            self.took_time = end_t - start_t
 
         def read(self, length, offset):
             """read handler.
@@ -289,12 +329,8 @@ class MogamiFS(Fuse):
             @param length request size of read
             @param offset offset of read request
             """
+            start_t = time.time()
             MogamiLog.debug("**read offset=%d, length=%d" % (offset, length))
-
-            # check access pattern
-            #self.access_pattern.check_mode(offset, length)
-            #self.access_pattern.change_info(offset, ret_str.tell(),
-#                                            last_readbl)
 
             """
             if conf.prefetch == True:
@@ -314,32 +350,66 @@ class MogamiFS(Fuse):
                     if len(blnum_list) != 0:
                         self.request_prefetch(blnum_list)
             self.calc_time += end_t - start_t"""
+            ret_buf = self.mogami_file.read(length, offset)
+            end_t = time.time()
+            self.access_pattern.insert_data(self.access_pattern.read, offset,
+                                            len(ret_buf))
 
-            return self.mogami_file.read(length, offset)
+            self.took_time += end_t - start_t
+            return ret_buf
 
         def write(self, buf, offset):
+            start_t = time.time()
             if self.fsize < offset + len(buf):
                 self.fsize = offset + len(buf)
                 file_size_dict[self.path] = self.fsize
-            return self.mogami_file.write(buf, offset)
+            ret_value = self.mogami_file.write(buf, offset)
+            if ret_value > 0:
+                self.access_pattern.insert_data(self.access_pattern.write,
+                                                offset, ret_value)
+            end_t = time.time()
+            self.took_time += end_t - start_t
+            return ret_value
 
         def flush(self, ):
+            start_t = time.time()
             ans = self.mogami_file.flush()
+            end_t = time.time()
+            self.took_time += end_t - start_t
             return ans
 
         def fsync(self, isfsyncfile):
+            start_t = time.time()
             ans = self.mogami_file.fsync(isfsyncfile)
+            end_t = time.time()
+            self.took_time += end_t - start_t
             return ans
 
         def release(self, flags):
+            start_t = time.time()
             MogamiLog.debug("** release **")
 
             fsize = self.mogami_file.release(flags)
-
             ans = m_channel.release_req(self.metafd, fsize)
             # delete file size cache
             if self.path in file_size_dict:
                 del file_size_dict[self.path]
+
+            # prepare data to tell access pattern
+            myname = m_channel.getmyname()
+            (read_data, write_data) = self.access_pattern.mk_form_data()
+            pid = self.access_pattern.pid
+            cmd_args = self.access_pattern.cmd_args
+            path = self.access_pattern.path
+            end_t = time.time()
+            self.took_time += end_t - start_t
+            
+            if cmd_args != None:
+                # process access pattern history (may be inserted to queue)
+                file_access_queue.put((cmd_args, pid, path, myname,
+                                       self.took_time, self.created,
+                                       read_data, write_data))
+
             return 0
 
     def main(self, *a, **kw):

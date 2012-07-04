@@ -63,6 +63,10 @@ TYPE_TCP = 0
 TYPE_UNIX = 1
 
 class MogamiChannelRepository(object):
+    """Class for repository of all channels.
+
+    This class is not used now!
+    """
     def __init__(self, ):
         self.channel_dict = {}
         self.lock = threading.Lock()
@@ -79,21 +83,30 @@ class MogamiChannelRepository(object):
             self.channel_dict[dest] = (d_channel, p_channel)
 
 class MogamiChannel(object):
-    """the class for communication with others using TCP
+    """Class for communication with others using TCP
     """    
-    def __init__(self, *mode):
+    def __init__(self, mode=TYPE_TCP):
         """initializer of mogami's channel
         default mode is tcp socket mode 
 
-        @param *mode socket type used in this class (optional)
+        @param mode socket type used in this class (optional)
         """
-        if len(mode) > 0:
-            if mode[0] == TYPE_UNIX:
-                self.connect = self.unix_connect
+        if mode == TYPE_UNIX:
+            self.connect = self.unix_connect
 
         # lock for the socket
         self.lock = threading.Lock()
         self.peername = None
+        self.myname = None
+
+    def unix_mk_listening_socket(self, path):
+        """
+        """
+        # make a socket to communicate with others
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(path)
+        self.sock.listen(10)
 
     def unix_connect(self, path):
         """This function might be replaced to connect,
@@ -116,6 +129,10 @@ class MogamiChannel(object):
         self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.sock.connect((dist, port))
 
+        # set name (IP address)
+        self.peername = self.sock.getpeername()[0]
+        self.myname = self.sock.getsockname()[0]
+
     def set_socket(self, sock):
         """create a channel from a socket
 
@@ -123,13 +140,26 @@ class MogamiChannel(object):
         """
         self.sock = sock
 
+        # set name (IP address)
+        peername = self.sock.getpeername()
+        if len(peername) > 0:
+            self.peername = peername[0]
+        myname = self.sock.getsockname()
+        if len(myname) > 0:
+            self.myname = myname[0]
+
+    def getmyname(self, ):
+        """return name (IP address) of myself.
+        """
+        return self.myname
+    
     def getpeername(self, ):
-        if self.peername == None:
-            self.peername = self.sock.getpeername()[0]
+        """return name (IP address) of connected peer.
+        """
         return self.peername
 
     def sendall(self, data):
-        """send all data
+        """send all data.
 
         This function may return errno, when send error occurs.
         @param data data to send
@@ -142,7 +172,7 @@ class MogamiChannel(object):
         return len(data)
 
     def recvall(self, length):
-        """recv all data
+        """recv all data.
 
         This function may return less data than required.
         (when connection closed)
@@ -166,7 +196,9 @@ class MogamiChannel(object):
         return data
 
     def send_msg(self, data):
-        """
+        """send packed message.
+
+        @param data data to send
         """
         buf = cPickle.dumps(data)
         while conf.bufsize - 3 < len(buf):
@@ -179,7 +211,7 @@ class MogamiChannel(object):
         self.sendall(buf)
 
     def recv_msg(self, ):
-        """
+        """receive packed message.
         """
         res_buf = cStringIO.StringIO()
         buf = ""
@@ -219,18 +251,16 @@ class MogamiChannel(object):
         return (buf.getvalue(), recv_time)
 
     def finalize(self, ):
-        """finalizer of mogami channel.
+        """finalize mogami channel.
         """
         self.sock.close()
 
 
 class MogamiChanneltoMeta(MogamiChannel):
-    """
-    """
-    def __init__(self, *dest):
+    def __init__(self, dest=None):
         MogamiChannel.__init__(self)
-        if len(dest) > 0:
-            self.connect(dest[0], conf.metaport)
+        if dest != None:
+            MogamiChannel.connect(self, dest, conf.metaport)
 
     def connect(self, meta_ip):
         MogamiChannel.connect(self, meta_ip, conf.metaport)
@@ -350,12 +380,17 @@ class MogamiChanneltoMeta(MogamiChannel):
 
 
 class MogamiChanneltoData(MogamiChannel):
-    """
-    """
-    def __init__(self, *dest):
+    def __init__(self, dest=None):
         MogamiChannel.__init__(self)
-        if len(dest) > 0:
-            self.connect(dest[0], conf.dataport)
+        if dest != None:
+            MogamiChannel.connect(self, dest, conf.dataport)
+
+    def connect(self, data_ip):
+        """connect to data server.
+
+        @param data_ip ip address of data server to connect
+        """
+        MogamiChannel.connect(self, data_ip, conf.dataport)
 
     def open_req(self, datapath, flags, *mode):
         with self.lock:
@@ -423,14 +458,13 @@ class MogamiChanneltoData(MogamiChannel):
             ans = self.recv_msg()
         return ans
 
-class MogamiChannelforServer(MogamiChannel):
 
+class MogamiChannelforServer(MogamiChannel):
     def recv_request(self, ):
         return self.recv_msg()
 
 
 class MogamiChannelforMeta(MogamiChannelforServer):
-
     def getattr_answer(self, ans, st, fsize):
         with self.lock:
             self.send_msg((ans, st, fsize))
@@ -531,10 +565,29 @@ class MogamiChannelforData(MogamiChannelforServer):
 
 
 class MogamiChanneltoTellAP(MogamiChannel):
-    def __init__(self, path):
+    def __init__(self, pipepath):
         MogamiChannel.__init__(self, TYPE_UNIX)
+        MogamiChannel.unix_mk_listening_socket(self, pipepath)
 
+    def accept_with_timeout(self, timeout):
+        self.sock.settimeout(timeout)
+        try:
+            (sock, address) = self.sock.accept()
+        except socket.timeout:
+            return None
+        c_channel = MogamiChannel(TYPE_UNIX)
+        c_channel.set_socket(sock)
+
+        # return channel of client
+        return c_channel
 
 class MogamiChanneltoAskAP(MogamiChannel):
-    def __init__(self, ):
+    def __init__(self, pipepath):
         MogamiChannel.__init__(self, TYPE_UNIX)
+        self.connect(pipepath)
+
+    def file_access_req(self, pid):
+        self.send_msg(pid)
+        file_access_list = self.recv_msg()
+        # this file access list if might be empty
+        return file_access_list

@@ -9,6 +9,8 @@ sys.path.append(os.pardir)
 import threading
 import cStringIO
 import time
+import os.path
+import Queue
 
 from conf import conf
 from libs.System import MogamiLog
@@ -16,6 +18,62 @@ from fuse import Fuse
 from libs import Channel
 import fuse
 fuse.fuse_python_api = (0, 2)
+
+
+class MogamiAccessPattern(object):
+    """Access pattern repository for a file
+    """
+    read = 0
+    write = 1
+
+    def __init__(self, path, cmds, pid):
+        self.path = path
+        self.cmd_args = cmds
+        self.pid = pid
+        self.queue = Queue.Queue()
+
+    def insert_data(self, ops, offset, length):
+        self.queue.put((ops, offset, length))
+            
+    def mk_form_data(self, ):
+        read_data = []
+        write_data = []
+        while True:
+            try:
+                item = self.queue.get_nowait()
+                if item[0] == self.read:
+                    read_data.append((item[1], item[2]))
+                else:
+                    write_data.append((item[1], item[2]))
+            except Queue.Empty:
+                break
+        
+        read_data.sort()
+        write_data.sort()
+
+        tmp_list = []
+        next_expected_offset = -1
+        for data in read_data:
+            if data[0] == next_expected_offset:
+                former_data = tmp_list.pop()
+                tmp_list.append((former_data[0], former_data[1] + data[1]))
+            else:
+                tmp_list.append(data)
+            next_expected_offset = data[0] + data[1]
+        read_data = tmp_list
+
+        tmp_list = []
+        next_expected_offset = -1
+        for data in write_data:
+            if data[0] == next_expected_offset:
+                former_data = tmp_list.pop()
+                tmp_list.append((former_data[0], former_data[1] + data[1]))
+            else:
+                tmp_list.append(data)
+            next_expected_offset = data[0] + data[1]
+        write_data = tmp_list
+
+        return (read_data, write_data)
 
 
 class MogamiStat(fuse.Stat):
