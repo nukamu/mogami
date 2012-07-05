@@ -26,9 +26,11 @@ def main():
                       const=1, dest="mode")
     parser.add_option("-c", "--client", action="store_const",
                       const=2, dest="mode")
-    parser.add_option("-a", "--analyzer", action="store_const",
+    parser.add_option("--share", action="store_const",
                       const=3, dest="mode")
-    parser.add_option("--meta_addr", dest="meta_addr")
+
+    parser.add_option("--meta_addr", dest="meta_addr", default=None)
+
 
     # options (not required)
     parser.add_option("-f", action="store_true", dest="f", default=False)
@@ -42,9 +44,14 @@ def main():
         import meta
         meta.main(args[0], mogami_dir)
     elif options.mode == 1:  # case of server
+        if options.meta_addr == None:
+            sys.exit("Error: Please Specify the Address of Metadata Server.")
         import data
         data.main(options.meta_addr, args[0], mogami_dir)
     elif options.mode == 2:  # case of client
+        if options.meta_addr == None:
+            sys.exit("Error: Please Specify the Address of Metadata Server.")
+
         mount_dir = os.path.join(os.getcwd(), args[0])
         os.chdir(os.path.join(mogami_dir, 'bin'))
         if options.debug == True:
@@ -54,9 +61,11 @@ def main():
         else:
             os.system("python fs.py %s %s -o big_writes -o large_read" % (options.meta_addr, mount_dir))
 
-    elif options.mode == 3:
-        import apd
-        apd.main()
+    elif options.mode == 3:  # case of share
+        if options.meta_addr == None:
+            sys.exit("Error: Please Specify the Address of Metadata Server.")
+        os.chdir(os.path.join(mogami_dir, 'bin'))
+        os.system("python mogami_share.py %s %s" % (" ".join(args), options.meta_addr))
 
 if __name__ == '__main__':
     main()

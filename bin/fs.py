@@ -54,7 +54,7 @@ class MogamitoTellAccessPattern(Daemons.MogamiDaemons):
             self.answer_to_client()
 
     def answer_to_client(self, ):
-        c_channel = self.channel.accept_with_timeout(1.0)
+        c_channel = self.channel.accept_with_timeout(0.1)
         if c_channel == None:
             return None
         pid = c_channel.recv_msg()
